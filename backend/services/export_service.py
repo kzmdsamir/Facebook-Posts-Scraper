@@ -7,12 +7,14 @@ there is no path-traversal surface here. ``base_dir`` comes from settings.
 
 Every export request is recorded in the ``export_jobs`` table (pending ->
 completed | failed) as an audit trail.
+
+Phase 18: Added batch loading for large datasets to limit memory usage.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, Generator, List
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -29,6 +31,9 @@ from backend.services import serialization
 logger = get_logger("services.export_service")
 
 EXPORT_FORMATS = ("json", "csv", "excel", "xlsx")
+
+# Default batch size for streaming exports (balances memory vs. DB round-trips)
+_BATCH_SIZE = 500
 
 
 def _now() -> datetime:
@@ -59,6 +64,49 @@ def _posts_loader_for_job(job_id: str) -> Callable[[], List[dict]]:
         return posts
 
     return _load
+
+
+def _posts_loader_batch(
+    job_id: str,
+    batch_size: int = _BATCH_SIZE,
+) -> Generator[List[dict], None, None]:
+    """Yield posts in batches for memory-efficient processing.
+
+    Each batch opens and closes its own session.  Use this for large datasets
+    where loading all posts into memory at once would be problematic.
+
+    Yields:
+        Lists of post dicts, each containing at most ``batch_size`` items.
+    """
+    offset = 0
+    while True:
+        with SessionLocal() as db:
+            rows = db.scalars(
+                select(Post)
+                .where(Post.job_id == job_id)
+                .options(selectinload(Post.engagement), selectinload(Post.media))
+                .order_by(Post.published_at.desc().nulls_last(), Post.id.desc())
+                .offset(offset)
+                .limit(batch_size)
+            ).all()
+            if not rows:
+                break
+            posts = [serialization.post_to_dict(post) for post in rows]
+            yield posts
+            if len(rows) < batch_size:
+                break
+            offset += batch_size
+
+
+def count_posts_for_job(job_id: str) -> int:
+    """Return the total number of posts for a job (lightweight count query)."""
+    from sqlalchemy import func
+
+    with SessionLocal() as db:
+        count = db.scalar(
+            select(func.count(Post.id)).where(Post.job_id == job_id)
+        )
+        return count or 0
 
 
 def build_export(
