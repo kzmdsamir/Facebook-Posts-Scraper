@@ -90,6 +90,8 @@ class ScrapeOptions:
     :param start_date: ``YYYY-MM-DD`` inclusive lower bound (``None`` = no bound).
     :param end_date:   ``YYYY-MM-DD`` inclusive upper bound (``None`` = no bound).
     :param post_type:  optional filter, one of ``text|image|video|link``.
+    :param delay: override for inter-request delay (seconds).
+    :param proxy_url: optional HTTP proxy URL for this scrape.
 
     Construction validates the date format, date ordering, post_type value
     and max_posts type; ``ValueError`` is raised on invalid input so the API
@@ -101,6 +103,8 @@ class ScrapeOptions:
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     post_type: Optional[str] = None
+    delay: Optional[float] = None
+    proxy_url: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.urls, list):
@@ -150,6 +154,8 @@ class ScrapeOptions:
             start_date=data.get("start_date"),
             end_date=data.get("end_date"),
             post_type=data.get("post_type"),
+            delay=data.get("delay"),
+            proxy_url=data.get("proxy_url"),
         )
 
 
@@ -295,7 +301,11 @@ def scrape_source(
     try:
         emit("fetching")
         logger.info("Starting fetch for %s", url)
-        fetcher = Fetcher(cancel_event=cancel_event)
+        fetcher = Fetcher(
+            cancel_event=cancel_event,
+            delay=options.delay,
+            proxy_url=options.proxy_url,
+        )
         try:
             fetch = fetcher.fetch_page(normalized_url)
             logger.info(

@@ -85,6 +85,7 @@ def make_client(
     timeout: float | None = None,
     user_agent: str | None = None,
     extra_headers: dict[str, str] | None = None,
+    proxy_url: str | None = None,
 ) -> httpx.Client:
     """Create an ``httpx.Client`` with browser-like defaults.
 
@@ -93,6 +94,7 @@ def make_client(
     * ``User-Agent`` defaults to Chrome 128 on Windows.
     * Cookies are NOT cleared here — the caller should clear after each
       response to comply with our no-session policy.
+    * If ``proxy_url`` is provided, requests are routed through that proxy.
     """
     headers = dict(BROWSER_HEADERS)
     if user_agent:
@@ -100,11 +102,14 @@ def make_client(
     if extra_headers:
         headers.update(extra_headers)
     effective_timeout = timeout or _env_float("SCRAPER_TIMEOUT_SECONDS", 20.0)
-    return httpx.Client(
-        timeout=httpx.Timeout(effective_timeout),
-        follow_redirects=True,
-        headers=headers,
-    )
+    client_kwargs: dict = {
+        "timeout": httpx.Timeout(effective_timeout),
+        "follow_redirects": True,
+        "headers": headers,
+    }
+    if proxy_url:
+        client_kwargs["proxy"] = proxy_url
+    return httpx.Client(**client_kwargs)
 
 
 # ---------------------------------------------------------------------------

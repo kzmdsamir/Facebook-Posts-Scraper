@@ -123,14 +123,18 @@ def _build_scrape_options(urls: list[str], snapshot: dict) -> Any:
 
     Falls back to a plain dict (same keys) if the scraper's options type is
     not kwargs-compatible — the scraper layer is the owner of that class.
+    Pulls proxy and delay settings from the global config as defaults.
     """
     scraper = _scraper_module()
+    settings = get_settings()
     kwargs: dict[str, Any] = {
         "urls": urls,
         "max_posts": snapshot.get("max_posts"),
         "start_date": snapshot.get("start_date"),
         "end_date": snapshot.get("end_date"),
         "post_type": snapshot.get("post_type"),
+        "delay": snapshot.get("delay") or settings.scraper_delay_seconds,
+        "proxy_url": snapshot.get("proxy_url") or settings.proxy_url,
     }
     try:
         return scraper.ScrapeOptions(**kwargs)

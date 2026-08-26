@@ -198,3 +198,41 @@ class TestEndToEnd:
         assert result["status"] == "ok"
         assert "latency_ms" in result
         assert "pool_status" in result
+
+    def test_fetcher_accepts_proxy(self):
+        """Fetcher passes proxy_url through to httpx client."""
+        from backend.scraper.fetcher import Fetcher
+        f = Fetcher(proxy_url="http://127.0.0.1:9999", use_robots=False, delay=0.1)
+        try:
+            # Client should be created (no crash)
+            assert f._client is not None
+        finally:
+            f.close()
+
+    def test_scrape_options_proxy_and_delay(self):
+        """ScrapeOptions accepts proxy_url and delay from dict."""
+        from backend.scraper import ScrapeOptions
+        opts = ScrapeOptions.from_dict({
+            "urls": ["https://www.facebook.com/Test"],
+            "delay": 3.0,
+            "proxy_url": "http://127.0.0.1:8080",
+        })
+        assert opts.delay == 3.0
+        assert opts.proxy_url == "http://127.0.0.1:8080"
+
+    def test_config_has_proxy_fields(self):
+        """Global config exposes proxy_url and proxy_urls."""
+        from backend.core.config import get_settings
+        s = get_settings()
+        assert hasattr(s, "proxy_url")
+        assert hasattr(s, "proxy_urls")
+        assert hasattr(s, "scraper_delay_seconds")
+
+    def test_make_client_with_proxy(self):
+        """http_client.make_client creates a client with proxy."""
+        from backend.scraper.http_client import make_client
+        c = make_client(timeout=2.0, proxy_url="http://127.0.0.1:9999")
+        try:
+            assert c is not None
+        finally:
+            c.close()

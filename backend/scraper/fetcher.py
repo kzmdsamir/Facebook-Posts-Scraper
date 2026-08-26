@@ -288,6 +288,7 @@ class Fetcher:
         use_robots: Optional[bool] = None,
         cancel_event=None,
         max_body_bytes: int = MAX_BODY_BYTES,
+        proxy_url: Optional[str] = None,
     ) -> None:
         #: minimum seconds between requests (env-overridable, hard floor)
         self.delay = max(
@@ -306,6 +307,7 @@ class Fetcher:
         self.user_agent = user_agent or DEFAULT_USER_AGENT
         self.max_body_bytes = max_body_bytes
         self.cancel_event = cancel_event
+        self.proxy_url = proxy_url
 
         use_robots = _env_bool("SCRAPER_ROBOTS", True) \
             if use_robots is None else use_robots
@@ -316,6 +318,7 @@ class Fetcher:
         self._client = make_client(
             timeout=self.timeout,
             user_agent=self.user_agent,
+            proxy_url=proxy_url,
         )
         self._last_request_at: Optional[float] = None
         self.requests_made = 0
