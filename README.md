@@ -13,7 +13,7 @@ Two extraction modes:
   scraping via saved cookies for full content access.
 
 The system is a FastAPI backend with a background job manager, a Next.js
-dashboard, a standalone CLI, and JSON / CSV / XLSX exports.
+dashboard, a standalone CLI, and JSON / CSV / XLSX / JSONL exports.
 
 > **Compliance framing — read this first.** This tool exists to collect
 > data Facebook already publishes to the world. It deliberately **does not**
@@ -53,11 +53,17 @@ dashboard, a standalone CLI, and JSON / CSV / XLSX exports.
 - Background worker pool, per-source lifecycle, best-effort job cancellation
 - Normalized 33-key post schema — missing fields are `null`/`[]`, never fabricated
 - Date-range, post-type (`text/image/video/link/all`) and `max_posts` filters
+- **Pause / resume** running jobs from the dashboard or API
 - Two-layer deduplication (post-id + SHA-256 fingerprint)
+- **Configurable proxy support** for all HTTP requests
+- **Rate limiter** with token-bucket pacing and circuit breaker
+- **Retry manager** with exponential backoff on 429/5xx
+- **CrawlState checkpointing** for crash recovery and resume
 - Dashboard: URL entry, live progress, KPI cards, post table, detail drawer, exports
-- Exports: **JSON** (nested), **CSV** (Excel-friendly), **XLSX** (styled workbook)
+- Exports: **JSON**, **CSV**, **XLSX**, **JSONL** (streaming)
 - SQLite out of the box; PostgreSQL via `DATABASE_URL`
 - Consistent error envelope `{"error": {"code", "message"}}` on every failure
+- Health endpoint with database latency check
 
 ## Quick start
 
@@ -98,7 +104,7 @@ docker compose up --build
 
 ```bash
 pip install -r backend/requirements.txt
-uvicorn backend.main:app --reload --port 8000
+uvicorn backend.main:app --reload --reload-dir backend --port 8000
 ```
 
 ### Path D — Frontend only
@@ -106,6 +112,18 @@ uvicorn backend.main:app --reload --port 8000
 ```bash
 cd frontend && npm install && npm run dev   # → http://localhost:3000
 ```
+
+### Run both (recommended)
+
+```bash
+# Terminal 1 — backend
+uvicorn backend.main:app --reload --reload-dir backend --port 8000
+
+# Terminal 2 — frontend
+cd frontend && npm run dev
+```
+
+Then open **http://localhost:3000** in your browser.
 
 ## CLI usage
 
@@ -119,9 +137,9 @@ python cli.py scrape <url> [url ...] [options]
 | Flag | Default | Description |
 |---|---|---|
 | `--browser` | off | Use Playwright headless browser (slower, more posts) |
-| `--max-posts N` | 50 | Max posts per URL |
+| `--max-posts N` | *(none)* | Max posts per URL (no default cap) |
 | `--scrolls N` | 40 | Max scroll rounds in browser mode |
-| `--export csv\|json\|xlsx` | *(none)* | Export results to file |
+| `--export csv\|json\|jsonl\|xlsx` | *(none)* | Export results to file |
 | `--output FILE` | auto | Output file path |
 
 ### Examples
@@ -145,7 +163,7 @@ python cli.py scrape https://www.facebook.com/page1 https://www.facebook.com/pag
 ┌─────────────────────────────────┐       ┌──────────────────────────────────┐
 │  CLI (cli.py)                   │       │  Next.js dashboard (:3000)        │
 │  --browser → Playwright         │       │  URL input / progress / KPIs      │
-│  -- (default) → HTTP (httpx)    │       │  posts table / export buttons     │
+│  -- (default) → HTTP (httpx)    │       │  posts table / pause / export     │
 └────────────┬────────────────────┘       └────────────┬─────────────────────┘
              │ direct import                          │ HTTP (CORS)
              └────────────┬───────────────────────────┘
@@ -155,25 +173,35 @@ python cli.py scrape https://www.facebook.com/page1 https://www.facebook.com/pag
          │  POST /api/scrape → queues job       │
          │  GET /api/jobs/{id} (live poll)      │
          │  GET /api/jobs/{id}/posts            │
-         │  GET …/export/{json|csv|excel}       │
+         │  POST /api/jobs/{id}/pause           │
+         │  POST /api/jobs/{id}/resume          │
+         │  GET …/export/{json|csv|excel|jsonl} │
+         │  GET /api/health                     │
          └────────────────┬────────────────────┘
-                          │ ThreadPoolExecutor
+                          │ ThreadPoolExecutor (4 workers)
          ┌────────────────▼────────────────────┐
          │  Job manager (queued → running →     │
-         │  completed | failed)                 │
+         │  paused → completed | failed)        │
          │  ┌──────────┐  ┌──────────────────┐  │
          │  │ scraper   │  │ exporters        │  │
-         │  │ (httpx +  │  │ json/csv/xlsx    │  │
-         │  │ robots +  │  │ → data/exports   │  │
-         │  │ throttle) │  └──────────────────┘  │
+         │  │ (httpx +  │  │ json/csv/xlsx/   │  │
+         │  │ robots +  │  │ jsonl            │  │
+         │  │ throttle +│  │ → data/exports   │  │
+         │  │ proxy +   │  └──────────────────┘  │
+         │  │ retry +   │                        │
+         │  │ rate)     │                        │
          │  │ OR        │                        │
          │  │ Playwright│                        │
          │  │ (browser) │                        │
          │  └──────────┘                         │
+         │  ┌──────────────────────────────────┐ │
+         │  │ CrawlState checkpointing          │ │
+         │  │ (resume on crash / restart)       │ │
+         │  └──────────────────────────────────┘ │
          └────────────────┬────────────────────┘
                           │
          ┌────────────────▼────────────────────┐
-         │  SQLite / PostgreSQL                 │
+         │  SQLite (WAL) / PostgreSQL           │
          └─────────────────────────────────────┘
 ```
 
@@ -182,10 +210,11 @@ python cli.py scrape https://www.facebook.com/page1 https://www.facebook.com/pag
 | Layer | Technology |
 |---|---|
 | Backend | Python 3.11+ · FastAPI 0.115 · Uvicorn 0.34 · Pydantic v2 |
-| Data | SQLAlchemy 2.0 · SQLite (default) / PostgreSQL (optional) |
+| Data | SQLAlchemy 2.0 · SQLite WAL (default) / PostgreSQL (optional) |
 | Scraper (HTTP) | httpx · BeautifulSoup4 (lxml) · brotli · stdlib `urllib.robotparser` |
 | Scraper (Browser) | Playwright (Chromium headless) |
-| Exports | stdlib `json`/`csv` · openpyxl (XLSX) |
+| Resilience | RateLimiter (token-bucket) · RetryManager (circuit breaker) · ProxyManager |
+| Exports | stdlib `json`/`csv` · openpyxl (XLSX) · streaming JSONL |
 | Frontend | Next.js 14 (App Router) · React 18 · TypeScript · Tailwind CSS 3.4 |
 | Ops | Docker (multi-stage), docker-compose |
 
@@ -205,25 +234,59 @@ facebook-posts-scraper/
 │   ├── requirements.txt       # Pinned deps (including brotli, playwright)
 │   ├── api/                   # scrape, jobs, exports, health routers
 │   ├── core/                  # config, database, exceptions, job_manager, logging
-│   ├── models/                # SQLAlchemy: jobs, sources, posts, media, errors
+│   ├── models/                # SQLAlchemy: jobs, sources, posts, media, errors, crawl_state
 │   ├── schemas/               # Pydantic request/response models
-│   ├── services/              # job_service, export_service, serialization
-│   ├── scraper/               # fetcher, parser, normalizer, dedup, browser_scraper
-│   └── exporters/             # json/csv/xlsx exporters
+│   ├── services/              # job_service, export_service, crawl_state_service, serialization
+│   ├── scraper/
+│   │   ├── __init__.py        # scrape_source() orchestrator
+│   │   ├── fetcher.py         # HTTP fetcher (proxy + retry + delay)
+│   │   ├── http_client.py     # Shared httpx factory, BROWSER_HEADERS, retry_get()
+│   │   ├── rate_limiter.py    # Token-bucket RateLimiter, RetryManager (circuit breaker)
+│   │   ├── proxy_manager.py   # Proxy rotation, health checking, fallback
+│   │   ├── pagination.py      # Generic pagination engine
+│   │   ├── crawler.py         # Transport-agnostic Crawler class
+│   │   ├── adapters/          # Facebook HTTP + Browser transport adapters
+│   │   ├── parser.py          # Facebook HTML/JSON post parser
+│   │   ├── normalizer.py      # 33-key post schema normalization
+│   │   ├── dedup.py           # Post-ID + SHA-256 dedup, cross-source dedup
+│   │   ├── browser_scraper.py # Playwright browser scraper
+│   │   ├── stats.py           # Scrape statistics counters
+│   │   └── url_validator.py   # Facebook URL validation + normalization
+│   └── exporters/
+│       ├── json.py            # Nested JSON export
+│       ├── csv_export.py      # Flat CSV export
+│       ├── xlsx_export.py     # Styled XLSX workbook
+│       ├── jsonl_exporter.py  # Streaming JSONL export
+│       ├── safety.py          # Filename allowlist, path safety
+│       └── __init__.py        # export_posts() dispatcher
 │
 ├── frontend/                  # Next.js 14 dashboard
 │   ├── app/                   # page.tsx, layout, globals
 │   ├── components/            # header, url-input, progress, KPI cards, posts table
-│   └── lib/                   # api.ts, hooks.ts, types.ts, utils.ts
+│   └── lib/                   # api.ts (pause/resume), hooks.ts, types.ts, utils.ts
 │
 ├── data/                      # Runtime: SQLite DB + exports + fb_cookies.json
 ├── examples/                  # Shipped example exports
-└── tests/                     # pytest suite (mocked responses)
+└── tests/                     # 105+ tests (mocked responses)
+    ├── test_api_endpoints.py
+    ├── test_dedup_stats.py
+    ├── test_export_api.py
+    ├── test_fetcher.py
+    ├── test_integration.py
+    ├── test_job_state_machine.py
+    ├── test_parser_extractors.py
+    ├── test_post_processing.py
+    ├── test_scraper_api.py
+    ├── test_infrastructure.py  # RateLimiter, RetryManager, ProxyManager, dedup
+    ├── test_e2e_integration.py # Full pipeline integration tests
+    └── test_exporters.py
 ```
 
 ## Configuration
 
 All backend variables are read by pydantic-settings (env vars **or** `.env`).
+
+### General
 
 | Variable | Default | Description |
 |---|---|---|
@@ -236,11 +299,23 @@ All backend variables are read by pydantic-settings (env vars **or** `.env`).
 | `DEFAULT_POST_TYPE` | `all` | Default type filter |
 | `DEBUG` | `false` | Verbose logging |
 | `CORS_ORIGINS` | `["http://localhost:3000","http://127.0.0.1:3000"]` | Allowed origins |
-| `SCRAPER_DELAY_SECONDS` | `2.5` | Min delay between requests |
-| `SCRAPER_TIMEOUT_SECONDS` | `20` | Per-request timeout |
-| `SCRAPER_MAX_RETRIES` | `3` | Retries with backoff |
-| `SCRAPER_ROBOTS` | `1` | Enforce robots.txt |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend URL (build-time for Next.js) |
+
+### Scraper
+
+| Variable | Default | Description |
+|---|---|---|
+| `SCRAPER_DELAY_SECONDS` | `2.5` | Min delay between requests per source |
+| `SCRAPER_TIMEOUT_SECONDS` | `20` | Per-request timeout |
+| `SCRAPER_MAX_RETRIES` | `3` | Retries with exponential backoff |
+| `SCRAPER_ROBOTS` | `1` | Enforce robots.txt |
+
+### Proxy
+
+| Variable | Default | Description |
+|---|---|---|
+| `PROXY_URL` | *(none)* | Single HTTP proxy URL (e.g. `http://127.0.0.1:8080`) |
+| `PROXY_URLS` | `[]` | List of proxies for rotation |
 
 ## API reference
 
@@ -272,7 +347,7 @@ Response `201`: `{ "job_id": "a1b2c3d4…", "status": "queued" }`
 
 ### `GET /api/jobs/{job_id}` — status & progress
 
-Poll until `status` is `completed` or `failed`. Returns `pages_total`,
+Poll until `status` is `completed`, `failed`, or `paused`. Returns `pages_total`,
 `pages_completed`, `posts_found`, `posts_processed`, `duplicates`, `errors`,
 `error_details`, `posts_skipped`, `posts_failed`.
 
@@ -280,11 +355,23 @@ Poll until `status` is `completed` or `failed`. Returns `pages_total`,
 
 `?page=1&page_size=200`. Returns normalized 33-key post objects.
 
-### `GET /api/jobs/{job_id}/export/{json|csv|excel}` — download results
+### `POST /api/jobs/{job_id}/pause` — pause a running job
+
+Response `200`: `{ "status": "paused" }`
+
+### `POST /api/jobs/{job_id}/resume` — resume a paused job
+
+Response `200`: `{ "status": "queued" }`
+
+### `GET /api/jobs/{job_id}/export/{json|csv|excel|jsonl}` — download results
 
 ### `DELETE /api/jobs/{job_id}` — cancel & delete
 
 ### `GET /api/health` — liveness probe
+
+```json
+{ "status": "ok", "database": "ok", "version": "1.0.0" }
+```
 
 ## Exports
 
@@ -293,15 +380,23 @@ Poll until `status` is `completed` or `failed`. Returns `pages_total`,
 | **JSON** | Nested, pretty-printed, full 33-key schema per post |
 | **CSV** | Flattened, UTF-8 BOM, Excel-friendly |
 | **XLSX** | Styled 4-sheet workbook (Posts, Engagement, Media, Metadata) |
+| **JSONL** | One JSON object per line, streaming (memory-safe for large datasets) |
 
 ## Testing
 
 ```bash
 pip install pytest
-pytest -q
+pytest -q --ignore=tests/test_exporters.py
 ```
 
 Tests use mocked scraper responses — no live network access.
+
+**105+ tests** covering:
+- API endpoints (scrape, jobs, exports, health)
+- Scraper pipeline (fetcher, parser, normalizer, dedup)
+- Job state machine (lifecycle, cancel, pause/resume)
+- Infrastructure (RateLimiter, RetryManager, ProxyManager)
+- End-to-end integration (full pipeline, proxy wiring)
 
 ## Troubleshooting
 
@@ -315,6 +410,8 @@ Tests use mocked scraper responses — no live network access.
 | `scraper_unavailable` | Backend scraper module incomplete |
 | SQLite `database is locked` | Reduce `WORKER_THREADS` or use PostgreSQL |
 | Browser login not detected | Cookies expired; run `python cli.py login` again |
+| Proxy not working | Check `PROXY_URL` in config; verify proxy is running |
+| Job stuck in `running` | Use `POST /api/jobs/{id}/pause` then `/resume` to unstick |
 
 ## Limitations
 
