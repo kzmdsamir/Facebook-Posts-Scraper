@@ -1,0 +1,26 @@
+# Facebook Posts Scraper — backend dependencies (pinned)
+#
+# Install with:  pip install -r requirements.txt
+#
+# NOTE ON OWNERSHIP: httpx, beautifulsoup4 and lxml belong to the scraper
+# layer (backend/scraper) but the application needs them at runtime, so they
+# are listed here as well. Keep the pinned set minimal and compatible.
+
+fastapi==0.115.12
+uvicorn==0.34.0
+sqlalchemy==2.0.40
+pydantic==2.10.6
+pydantic-settings==2.7.1
+python-multipart==0.0.20
+openpyxl==3.1.5
+
+# --- scraper layer dependencies (consumed by backend/scraper) ---------------
+httpx==0.28.1
+beautifulsoup4==4.13.3
+lxml==5.3.1
+brotli==1.2.0
+
+# --- optional: PostgreSQL backend -------------------------------------------------
+# To use PostgreSQL instead of SQLite, install a driver and set DATABASE_URL,
+# e.g.  DATABASE_URL=postgresql+psycopg://user:pass@host:5432/fb_scraper
+# psycopg[binary]==3.2.9

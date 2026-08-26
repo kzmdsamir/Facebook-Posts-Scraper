@@ -1,0 +1,12 @@
+# Test-suite dependencies — installed ON TOP of backend/requirements.txt.
+#
+#   python -m pip install --user -r backend/requirements.txt
+#   python -m pip install --user -r tests/requirements.txt
+#   python -m pytest tests/ -v
+
+pytest>=8.0
+
+# NOTE (pytest-asyncio): deliberately NOT required.  The FastAPI surface under
+# test is synchronous (def routes) and background jobs run in
+# threading.ThreadPoolExecutor threads; tests poll with short sleeps.  No
+# async fixtures or async tests are used anywhere in this suite.

@@ -1,0 +1,66 @@
+# ============================================================================
+# Facebook Posts Scraper — .gitignore
+# Build/runtime artifacts only. NOTE: examples/ ships intentionally
+# (sample_posts.json + generated facebook_posts.json/.csv/.xlsx) and is
+# deliberately NOT ignored.
+# ============================================================================
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node / Next.js -------------------------------------------------------
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts.bak
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Runtime data & exports (created by the app at runtime; never commit) --
+data/
+exports/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# --- Environment files (secrets live here; never commit) ------------------
+.env
+.env*.local
+.env*.secret
+
+# --- OS / editor ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Logs -----------------------------------------------------------------
+*.log
+logs/
+
+# --- Temporary / generated artifacts --------------------------------------
+.pytest-tmp/
+browser_posts.json
+posts.json
+posts.xlsx
