@@ -54,6 +54,7 @@ from backend.models.media import Media
 from backend.models.posts import Post
 from backend.models.scrape_jobs import ScrapeJob
 from backend.models.sources import ScrapeSource
+from backend.services import crawl_state_service
 from backend.schemas.scrape import ScrapeRequest
 
 logger = get_logger("services.job_service")
@@ -392,6 +393,18 @@ def _process_source(
         db.commit()
         source_url = source.normalized_url
 
+        # Create or get crawl state for resume tracking
+        crawl_state = crawl_state_service.get_resume_state(
+            db, source_id=source_id, job_id=job_id
+        )
+        if crawl_state is None:
+            crawl_state = crawl_state_service.create(
+                db, source_id=source_id, job_id=job_id
+            )
+        crawl_state_service.mark_running(db, crawl_state)
+        crawl_state_id = crawl_state.id
+        db.commit()
+
     try:
         options = _build_scrape_options([source_url], options_snapshot)
         result = scraper.scrape_source(
@@ -451,6 +464,23 @@ def _process_source(
         except Exception:  # noqa: BLE001 - job may have been deleted concurrently
             db.rollback()
             logger.exception("Could not persist source %s result (job %s)", source_id, job_id)
+
+    # Checkpoint crawl state after successful storage
+    try:
+        with SessionLocal() as db:
+            cs = db.get(crawl_state_service.CrawlState, crawl_state_id)
+            if cs is not None:
+                crawl_state_service.checkpoint(
+                    db,
+                    cs,
+                    pages_fetched=1,
+                    posts_extracted=len(posts),
+                    posts_stored=stored,
+                )
+                crawl_state_service.mark_completed(db, cs)
+                db.commit()
+    except Exception:
+        logger.debug("CrawlState checkpoint failed for source %s", source_id, exc_info=True)
 
     logger.info(
         "Source %s (job %s) completed: %d post(s) stored, %d duplicate(s), %d error(s)",
@@ -789,6 +819,14 @@ def _persist_source_failure(
                 message=message,
             )
         )
+        # Mark crawl state as failed
+        cs = crawl_state_service.get_resume_state(
+            db, source_id=source_id, job_id=job_id
+        )
+        if cs is not None:
+            crawl_state_service.mark_failed(
+                db, cs, error_code=code, error_message=message
+            )
         db.commit()
 
 
