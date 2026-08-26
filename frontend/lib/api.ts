@@ -85,7 +85,7 @@ function normalizeJob(raw: Partial<JobProgress>): JobProgress {
   const status = raw?.status ?? "queued";
   return {
     job_id: raw?.job_id ?? null,
-    status: TERMINAL_STATUSES.has(status) || status === "running" || status === "queued" ? status : "queued",
+    status: TERMINAL_STATUSES.has(status) || status === "running" || status === "queued" || status === "paused" ? status : "queued",
     pages_total: raw?.pages_total ?? null,
     pages_completed: raw?.pages_completed ?? null,
     posts_found: raw?.posts_found ?? null,
@@ -166,6 +166,20 @@ export const api = {
   /** DELETE /api/jobs/{job_id} (kept for completeness; the dashboard does not auto-delete) */
   async deleteJob(jobId: string): Promise<void> {
     return request<void>(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+  },
+
+  /** POST /api/jobs/{job_id}/pause */
+  async pauseJob(jobId: string): Promise<{ job_id: string; status: string }> {
+    return request<{ job_id: string; status: string }>(`/api/jobs/${encodeURIComponent(jobId)}/pause`, {
+      method: "POST",
+    });
+  },
+
+  /** POST /api/jobs/{job_id}/resume */
+  async resumeJob(jobId: string): Promise<{ job_id: string; status: string }> {
+    return request<{ job_id: string; status: string }>(`/api/jobs/${encodeURIComponent(jobId)}/resume`, {
+      method: "POST",
+    });
   },
 
   /** Absolute URL for the live export endpoints (JSON/CSV/XLSX). */
