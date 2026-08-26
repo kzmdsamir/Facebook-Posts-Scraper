@@ -10,29 +10,14 @@ Design constraints (product spec §6 / §9 / §10) implemented here:
   ``urllib.robotparser``.  When robots.txt *disallows* a path the fetcher
   refuses it (:class:`~scraper.errors.UnsupportedUrl` with code
   ``robots_disallowed``).
-  Documented policy: robots.txt is best-effort.  If it cannot be fetched at
-  all (network error/timeout/5xx) the fetcher proceeds using its *allowlist*
-  of public page/profile endpoints only - it never crawls disallowed paths
-  when the file is readable, and it never crawls auth/consent paths at all.
 * **Hard throttle.**  Minimum ``SCRAPER_DELAY_SECONDS`` (default 2.5 s)
-  between HTTP requests.  Configurable via environment (never below 0.1 s
-  to avoid operator mistakes).
+  between HTTP requests.
 * **Exponential backoff** on HTTP 429/5xx and transport errors, max 3
   retries (``SCRAPER_MAX_RETRIES``).  Honors ``Retry-After`` headers.
 * **Hard timeout.**  ``SCRAPER_TIMEOUT_SECONDS`` (default 20 s) applies to
   every request phase.
-* **Concurrency of 1 per source.**  One ``Fetcher`` per ``scrape_source``
-  call; requests are strictly sequential (the throttle plus synchronous code
-  make this structural, not incidental).
-* **No cookies, ever.**  httpx ``Client`` would normally persist
-  ``Set-Cookie`` values in its jar; this fetcher explicitly clears the jar
-  after *every* response so no cookie is stored or re-sent.  No session data
-  is ever provided.
-* **No evasion.**  A single honest, constant user agent.  No UA rotation,
-  no CAPTCHA solving, no headless-browser bypass, no "request signing".
-  If Facebook serves a login wall or a traffic check, the fetcher reports
-  :class:`~scraper.errors.AuthRequired` /
-  :class:`~scraper.errors.RateLimited` and stops that source.
+* **Concurrency of 1 per source.**
+* **No cookies, ever.**
 
 Environment variables
 ---------------------
@@ -45,8 +30,6 @@ Environment variables
 from __future__ import annotations
 
 import os
-import random
-import re
 import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -65,50 +48,23 @@ from .errors import (
     Timeout,
     UnsupportedUrl,
 )
+from .http_client import (
+    DEFAULT_USER_AGENT,
+    MAX_BODY_BYTES,
+    _env_bool,
+    _env_float,
+    _env_int,
+    _sleep_checked,
+    backoff,
+    make_client,
+    retry_get,
+    throttle,
+)
 
 __all__ = ["Fetcher", "FetchResult", "build_variants", "classify_page_html"]
 
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-)
 ROBOTS_URL = "https://www.facebook.com/robots.txt"
 ROBOTS_USER_AGENT_TOKEN = "FBPostsScraper"
-
-MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB safety cap for a page
-_MIN_DELAY_SECONDS = 0.1
-_MAX_BACKOFF_SECONDS = 30.0
-
-# ---------------------------------------------------------------------------
-# Environment helpers
-# ---------------------------------------------------------------------------
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    return raw.strip().lower() not in ("0", "false", "no", "off")
-
 
 # ---------------------------------------------------------------------------
 # Page-content classifiers (marker based; tuned to be conservative)
@@ -335,7 +291,7 @@ class Fetcher:
         #: minimum seconds between requests (env-overridable, hard floor)
         self.delay = max(
             delay if delay is not None else _env_float("SCRAPER_DELAY_SECONDS", 2.5),
-            _MIN_DELAY_SECONDS,
+            0.1,
         )
         #: hard per-request timeout
         self.timeout = timeout if timeout is not None \
@@ -356,25 +312,9 @@ class Fetcher:
         if not use_robots:
             self._robots_status = "disabled"
 
-        # NOTE: httpx.Client keeps a cookie jar by default.  We clear it after
-        # EVERY response so no Set-Cookie value is ever stored or re-sent.
-        self._client = httpx.Client(
-            timeout=httpx.Timeout(self.timeout),
-            follow_redirects=True,
-            headers={
-                "User-Agent": self.user_agent,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Sec-Ch-Ua": '"Chromium";v="128", "Not_A Brand";v="24", "Google Chrome";v="128"',
-                "Sec-Ch-Ua-Mobile": "?0",
-                "Sec-Ch-Ua-Platform": '"Windows"',
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Upgrade-Insecure-Requests": "1",
-            },
+        self._client = make_client(
+            timeout=self.timeout,
+            user_agent=self.user_agent,
         )
         self._last_request_at: Optional[float] = None
         self.requests_made = 0
@@ -400,103 +340,28 @@ class Fetcher:
 
     def _sleep_checked(self, seconds: float) -> None:
         """Sleep in small slices so cancellation stays responsive."""
-        deadline = time.monotonic() + seconds
-        while True:
-            self._check_cancel()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return
-            time.sleep(min(0.25, remaining))
+        _sleep_checked(seconds, self.cancel_event)
 
     def _throttle(self) -> None:
         """Enforce the minimum inter-request interval (hard throttle)."""
-        if self._last_request_at is not None:
-            elapsed = time.monotonic() - self._last_request_at
-            wait = self.delay - elapsed
-            if wait > 0:
-                self._sleep_checked(wait)
-        self._last_request_at = time.monotonic()
+        self._last_request_at = throttle(self._last_request_at, self.delay, self.cancel_event)
 
     def _backoff(self, attempt: int, retry_after: Optional[float] = None) -> None:
         """Exponential backoff for one retry step."""
-        jitter = random.uniform(0.8, 1.2)
-        wait = min(self.delay * (2 ** attempt) * jitter, _MAX_BACKOFF_SECONDS)
-        if retry_after is not None:
-            wait = max(wait, float(retry_after))
-        self._sleep_checked(wait)
-
-    @staticmethod
-    def _parse_retry_after(value: Optional[str]) -> Optional[float]:
-        if not value:
-            return None
-        try:
-            return float(value.strip())
-        except ValueError:
-            return None
+        backoff(attempt, self.delay, retry_after, self.cancel_event)
 
     # -- low-level request ------------------------------------------------
     def _raw_get(self, url: str) -> Tuple[int, str, str]:
-        """Throttled GET with retry/backoff.  Returns ``(status, final_url, html)``.
-
-        Raises ScraperError subclasses after retries are exhausted
-        (RateLimited / Timeout / PageUnavailable / ExtractionFailure).
-        Does NOT consult robots.txt (used internally for robots.txt itself).
-        """
-        self._throttle()
-        self._check_cancel()
-        attempts = 0
-        while True:
-            attempts += 1
-            self.requests_made += 1
-            self._check_cancel()
-            try:
-                with self._client.stream("GET", url) as resp:
-                    status = resp.status_code
-                    if status == 429 or status >= 500:
-                        retry_after = self._parse_retry_after(
-                            resp.headers.get("retry-after"))
-                        if attempts <= self.max_retries:
-                            self._backoff(attempts - 1, retry_after)
-                            continue
-                        if status == 429:
-                            raise RateLimited(
-                                f"Facebook rate-limited the request (HTTP 429) "
-                                f"after {attempts} attempts.")
-                        raise PageUnavailable(
-                            f"Facebook returned HTTP {status} after "
-                            f"{attempts} attempts.")
-
-                    body = bytearray()
-                    for chunk in resp.iter_bytes(chunk_size=65536):
-                        body.extend(chunk)
-                        if len(body) > self.max_body_bytes:
-                            raise ExtractionFailure(
-                                message=f"Response body exceeded "
-                                        f"{self.max_body_bytes} bytes; refused to read further.")
-                    final_url = str(resp.url)
-                    # --- compliance: NEVER retain cookies -----------------
-                    self._client.cookies.clear()
-                    try:
-                        text = body.decode(resp.encoding or "utf-8", errors="replace")
-                    except (LookupError, UnicodeDecodeError):  # pragma: no cover
-                        text = body.decode("utf-8", errors="replace")
-                    return status, final_url, text
-
-            except httpx.TimeoutException as exc:
-                self._client.cookies.clear()
-                if attempts <= self.max_retries:
-                    self._backoff(attempts - 1)
-                    continue
-                raise Timeout(
-                    f"Request timed out after {attempts} attempts: {exc}")
-            except httpx.HTTPError as exc:
-                self._client.cookies.clear()
-                if attempts <= self.max_retries:
-                    self._backoff(attempts - 1)
-                    continue
-                raise ExtractionFailure(
-                    code="network_error",
-                    message=f"Transport error after {attempts} attempts: {exc}")
+        """Throttled GET with retry/backoff.  Returns ``(status, final_url, html)``."""
+        self.requests_made += 1
+        return retry_get(
+            self._client,
+            url,
+            max_retries=self.max_retries,
+            delay=self.delay,
+            max_body_bytes=self.max_body_bytes,
+            cancel_event=self.cancel_event,
+        )
 
     # -- page fetch -------------------------------------------------------
     def fetch_page(self, normalized_url: str) -> FetchResult:
