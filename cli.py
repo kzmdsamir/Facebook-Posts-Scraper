@@ -116,14 +116,31 @@ def cmd_scrape(args: argparse.Namespace) -> None:
     max_posts = args.max_posts
     use_browser = args.browser
     scroll_rounds = args.scrolls
-    account_name = args.account
+
+    # Resolve account list
+    account_names = None
+    if getattr(args, "accounts_all", False):
+        from backend.scraper.browser_scraper import list_accounts
+        account_names = list_accounts()
+        if not account_names:
+            print("ERROR: No saved accounts. Run 'python cli.py login --account <name>' first.")
+            return
+    elif args.account:
+        account_names = [a.strip() for a in args.account.split(",") if a.strip()]
 
     mode = "browser" if use_browser else "HTTP"
-    print(f"Scraping {len(urls)} URL(s) via {mode}...\n")
+    account_info = f" (accounts: {', '.join(account_names)})" if account_names else ""
+    print(f"Scraping {len(urls)} URL(s) via {mode}{account_info}...\n")
 
     all_posts = []
-    for url in urls:
-        print(f"[{url}]")
+    for i, url in enumerate(urls):
+        # Rotate accounts: account1 for url1, account2 for url2, etc.
+        account_name = None
+        if account_names:
+            account_name = account_names[i % len(account_names)]
+            print(f"[{url}] (using account: {account_name})")
+        else:
+            print(f"[{url}]")
         t0 = time.time()
 
         if use_browser:
@@ -265,7 +282,8 @@ def main() -> None:
     scrape_p.add_argument("--scrolls", type=int, default=40, help="Max scroll rounds in browser mode (default: 40)")
     scrape_p.add_argument("--export", choices=["csv", "json", "jsonl", "xlsx"], help="Export format")
     scrape_p.add_argument("--output", type=str, help="Output file path")
-    scrape_p.add_argument("--account", type=str, help="Use saved cookies for this account")
+    scrape_p.add_argument("--account", type=str, help="Account name(s) to use — comma-separated for rotation (e.g. acc1,acc2,acc3)")
+    scrape_p.add_argument("--accounts-all", action="store_true", help="Auto-rotate ALL saved accounts")
 
     args = parser.parse_args()
     if args.command == "login":
