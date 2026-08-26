@@ -3,6 +3,8 @@
 * GET    /api/jobs/{job_id}          — live status + progress counters (spec §8)
 * GET    /api/jobs/{job_id}/posts    — paginated normalized posts (spec §14)
 * GET    /api/jobs/{job_id}/stats    — aggregated KPIs (bonus, for the dashboard)
+* POST   /api/jobs/{job_id}/pause    — pause a running job
+* POST   /api/jobs/{job_id}/resume   — resume a paused job
 * DELETE /api/jobs/{job_id}          — best-effort cancel + delete rows (204)
 
 All unknown jobs return 404 {"error": {"code": "not_found", ...}}.
@@ -15,7 +17,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from backend.core.config import get_settings
 from backend.core.database import get_db
-from backend.core.exceptions import NotFoundError
+from backend.core.exceptions import AppError, NotFoundError
 from backend.core.job_manager import JobManager
 from backend.models.errors import ScrapeError
 from backend.models.posts import Post
@@ -160,3 +162,50 @@ def delete_job(
     db.execute(delete(ScrapeJob).where(ScrapeJob.id == job_id))
     db.commit()
     return Response(status_code=204)
+
+
+@router.post(
+    "/jobs/{job_id}/pause",
+    status_code=200,
+    summary="Pause a running job",
+)
+def pause_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Pause a running/queued job.  The worker will stop after the current
+    source completes.  Returns the updated job status."""
+    job = _get_job_or_404(db, job_id)
+    if job.status not in ("queued", "running"):
+        raise AppError(
+            f"Cannot pause job in status '{job.status}'",
+            status_code=409,
+            code="invalid_state",
+        )
+    job.status = "paused"
+    db.commit()
+    return {"job_id": job.id, "status": "paused"}
+
+
+@router.post(
+    "/jobs/{job_id}/resume",
+    status_code=200,
+    summary="Resume a paused job",
+)
+def resume_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Resume a paused job.  The worker will pick up where it left off
+    using the CrawlState checkpoint.  Returns the updated job status."""
+    job = _get_job_or_404(db, job_id)
+    if job.status != "paused":
+        raise AppError(
+            f"Cannot resume job in status '{job.status}'",
+            status_code=409,
+            code="invalid_state",
+        )
+    job.status = "queued"
+    job.cancel_requested = False
+    db.commit()
+    return {"job_id": job.id, "status": "queued"}
