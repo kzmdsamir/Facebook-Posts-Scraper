@@ -114,7 +114,7 @@ def login_with_browser(timeout_seconds: int = 120) -> bool:
 def fetch_with_browser(
     url: str,
     *,
-    max_posts: int = 50,
+    max_posts: Optional[int] = None,
     scroll_rounds: int = MAX_SCROLL_ROUNDS,
     cancel_event: Optional[threading.Event] = None,
     use_cookies: bool = True,
@@ -225,7 +225,7 @@ def fetch_with_browser(
 
                 prev_count = post_count
 
-                if max_posts and post_count >= max_posts:
+                if max_posts is not None and post_count >= max_posts:
                     logger.info("Browser: reached %d articles (target: %d)", post_count, max_posts)
                     break
 

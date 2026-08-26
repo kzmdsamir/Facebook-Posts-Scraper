@@ -85,7 +85,8 @@ class ScrapeOptions:
 
     :param urls: list of page/profile URLs (validated by the API layer;
                  ``scrape_source`` is invoked once per URL).
-    :param max_posts: cap on returned posts per source (``None`` = no cap).
+    :param max_posts: cap on returned posts per source (``None`` = no cap;
+                      use only as a safety limit, not as a completion condition).
     :param start_date: ``YYYY-MM-DD`` inclusive lower bound (``None`` = no bound).
     :param end_date:   ``YYYY-MM-DD`` inclusive upper bound (``None`` = no bound).
     :param post_type:  optional filter, one of ``text|image|video|link``.

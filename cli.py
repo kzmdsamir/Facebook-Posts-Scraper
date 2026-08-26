@@ -45,10 +45,12 @@ def scrape_browser(
 
     print(f"  Launching browser...", end=" ", flush=True)
     t0 = time.time()
+    browser_kwargs = {"scroll_rounds": scroll_rounds}
+    if max_posts is not None:
+        browser_kwargs["max_posts"] = max_posts
     html = fetch_with_browser(
         normalized_url,
-        max_posts=max_posts,
-        scroll_rounds=scroll_rounds,
+        **browser_kwargs,
     )
     print(f"({time.time() - t0:.1f}s, {len(html)} bytes)")
 
@@ -86,8 +88,8 @@ def scrape_browser(
     # Dedup
     kept, duplicates = dedup_posts(normalized)
 
-    # Apply max_posts cap
-    if max_posts and len(kept) > max_posts:
+    # Apply max_posts cap (only when explicitly specified)
+    if max_posts is not None and len(kept) > max_posts:
         kept = kept[:max_posts]
 
     return SourceResult(
@@ -229,7 +231,7 @@ def main() -> None:
     scrape_p = sub.add_parser("scrape", help="Scrape Facebook posts from URLs")
     scrape_p.add_argument("urls", nargs="+", help="Facebook page/profile URLs")
     scrape_p.add_argument("--browser", action="store_true", help="Use Playwright browser (more posts, slower)")
-    scrape_p.add_argument("--max-posts", type=int, default=50, help="Max posts per URL (default: 50)")
+    scrape_p.add_argument("--max-posts", type=int, default=None, help="Max posts per URL (default: unlimited)")
     scrape_p.add_argument("--scrolls", type=int, default=40, help="Max scroll rounds in browser mode (default: 40)")
     scrape_p.add_argument("--export", choices=["csv", "json", "xlsx"], help="Export format")
     scrape_p.add_argument("--output", type=str, help="Output file path")
