@@ -20,6 +20,7 @@ per progress ping) so a long-scraping source never holds a transaction open.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import create_engine, event
@@ -101,3 +102,57 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def db_health_check() -> dict:
+    """Run a lightweight health check against the database.
+
+    Returns a dict with ``status`` ("ok" | "error"), ``latency_ms``,
+    ``pool_status``, and ``error`` if applicable.
+    """
+    import time as _time
+    from sqlalchemy import text
+
+    start = _time.monotonic()
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        latency = (_time.monotonic() - start) * 1000
+        pool = engine.pool
+        return {
+            "status": "ok",
+            "latency_ms": round(latency, 2),
+            "pool_status": {
+                "size": pool.size(),
+                "checked_in": pool.checkedin(),
+                "checked_out": pool.checkedout(),
+                "overflow": pool.overflow(),
+            },
+        }
+    except Exception as exc:
+        latency = (_time.monotonic() - start) * 1000
+        return {
+            "status": "error",
+            "latency_ms": round(latency, 2),
+            "error": str(exc),
+        }
+
+
+@contextmanager
+def get_session_context() -> Session:
+    """Context manager for a standalone session (non-FastAPI usage).
+
+    Usage::
+
+        with get_session_context() as session:
+            session.query(Post).all()
+    """
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
