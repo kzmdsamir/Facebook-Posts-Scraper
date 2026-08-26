@@ -31,6 +31,7 @@ def scrape_browser(
     url: str,
     max_posts: int,
     scroll_rounds: int,
+    account_name: str | None = None,
 ) -> SourceResult:
     """Scrape using Playwright headless browser."""
     from backend.scraper.browser_scraper import fetch_with_browser, parse_browser_page
@@ -48,6 +49,8 @@ def scrape_browser(
     browser_kwargs = {"scroll_rounds": scroll_rounds}
     if max_posts is not None:
         browser_kwargs["max_posts"] = max_posts
+    if account_name:
+        browser_kwargs["account_name"] = account_name
     html = fetch_with_browser(
         normalized_url,
         **browser_kwargs,
@@ -113,6 +116,7 @@ def cmd_scrape(args: argparse.Namespace) -> None:
     max_posts = args.max_posts
     use_browser = args.browser
     scroll_rounds = args.scrolls
+    account_name = args.account
 
     mode = "browser" if use_browser else "HTTP"
     print(f"Scraping {len(urls)} URL(s) via {mode}...\n")
@@ -123,7 +127,7 @@ def cmd_scrape(args: argparse.Namespace) -> None:
         t0 = time.time()
 
         if use_browser:
-            result = scrape_browser(url, max_posts, scroll_rounds)
+            result = scrape_browser(url, max_posts, scroll_rounds, account_name=account_name)
         else:
             options = ScrapeOptions(urls=[url], max_posts=max_posts)
             result = scrape_source(url, options)
@@ -172,6 +176,13 @@ def export_posts(posts: list, fmt: str, output: str | None) -> str:
             json.dump(posts, f, indent=2, ensure_ascii=False, default=str)
         return path
 
+    if fmt == "jsonl":
+        path = output or "posts.jsonl"
+        with open(path, "w", encoding="utf-8") as f:
+            for post in posts:
+                f.write(json.dumps(post, ensure_ascii=False, default=str) + "\n")
+        return path
+
     rows = []
     for post in posts:
         row = {}
@@ -215,7 +226,22 @@ def export_posts(posts: list, fmt: str, output: str | None) -> str:
 def cmd_login(args: argparse.Namespace) -> None:
     """Open browser for Facebook login and save cookies."""
     from backend.scraper.browser_scraper import login_with_browser
-    login_with_browser()
+    login_with_browser(account_name=args.account)
+
+
+def cmd_accounts(args: argparse.Namespace) -> None:
+    """List saved Facebook accounts."""
+    from backend.scraper.browser_scraper import list_accounts, load_credentials
+    accounts = list_accounts()
+    if not accounts:
+        print("No saved accounts. Run: python cli.py login --account <name>")
+        return
+    creds = load_credentials()
+    print(f"Saved accounts ({len(accounts)}):")
+    for name in accounts:
+        info = creds.get(name, {})
+        saved = info.get("saved_at", "unknown")
+        print(f"  - {name}  (saved: {saved})")
 
 
 def main() -> None:
@@ -225,7 +251,11 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command")
 
     # login command
-    sub.add_parser("login", help="Open browser to log into Facebook (saves cookies)")
+    login_p = sub.add_parser("login", help="Open browser to log into Facebook (saves cookies)")
+    login_p.add_argument("--account", type=str, help="Save cookies under this account name")
+
+    # accounts command
+    sub.add_parser("accounts", help="List saved Facebook accounts")
 
     # scrape command
     scrape_p = sub.add_parser("scrape", help="Scrape Facebook posts from URLs")
@@ -233,12 +263,15 @@ def main() -> None:
     scrape_p.add_argument("--browser", action="store_true", help="Use Playwright browser (more posts, slower)")
     scrape_p.add_argument("--max-posts", type=int, default=None, help="Max posts per URL (default: unlimited)")
     scrape_p.add_argument("--scrolls", type=int, default=40, help="Max scroll rounds in browser mode (default: 40)")
-    scrape_p.add_argument("--export", choices=["csv", "json", "xlsx"], help="Export format")
+    scrape_p.add_argument("--export", choices=["csv", "json", "jsonl", "xlsx"], help="Export format")
     scrape_p.add_argument("--output", type=str, help="Output file path")
+    scrape_p.add_argument("--account", type=str, help="Use saved cookies for this account")
 
     args = parser.parse_args()
     if args.command == "login":
         cmd_login(args)
+    elif args.command == "accounts":
+        cmd_accounts(args)
     elif args.command == "scrape":
         cmd_scrape(args)
     else:
