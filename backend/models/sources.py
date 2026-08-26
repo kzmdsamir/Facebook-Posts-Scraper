@@ -57,6 +57,9 @@ class ScrapeSource(Base):
 
     job = relationship("ScrapeJob", back_populates="sources")
     posts = relationship("Post", back_populates="source", cascade="all, delete-orphan")
+    crawl_states = relationship(
+        "CrawlState", back_populates="source", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<ScrapeSource id={self.id} status={self.status!r} url={self.normalized_url!r}>"

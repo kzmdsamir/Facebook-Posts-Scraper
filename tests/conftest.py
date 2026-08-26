@@ -69,6 +69,7 @@ _check_environment()
 _CLEANUP_MODELS = (
     "ExportJob",
     "ScrapeError",
+    "CrawlState",
     "Media",
     "EngagementMetric",
     "Post",

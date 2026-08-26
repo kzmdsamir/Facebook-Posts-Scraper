@@ -4,6 +4,7 @@ Importing this module registers every model on ``Base.metadata`` so
 ``init_db()`` (create_all) sees the full schema. Always import models from here
 rather than reaching into model modules individually where convenient.
 """
+from backend.models.crawl_state import CrawlState
 from backend.models.engagement_metrics import EngagementMetric
 from backend.models.errors import ScrapeError
 from backend.models.export_jobs import ExportJob
@@ -15,6 +16,7 @@ from backend.models.sources import ScrapeSource
 __all__ = [
     "ScrapeJob",
     "ScrapeSource",
+    "CrawlState",
     "Post",
     "EngagementMetric",
     "Media",
