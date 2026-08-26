@@ -572,9 +572,7 @@ def _extract_posts_from_scripts(
             except (OverflowError, OSError, ValueError):
                 pass
 
-        # Extract message text — Facebook nests it as:
-        # "delight_ranges":[],"image_ranges":[],...,"text":"THE TEXT"
-        # We find the ranges marker, then look for the nearest "text" after it.
+        # Extract message text — try multiple patterns in priority order
         text_val = None
 
         # Pattern 1: find "delight_ranges" or "inline_style_ranges", then nearby "text"
@@ -589,11 +587,7 @@ def _extract_posts_from_scripts(
                     nearby,
                 )
                 if t_m and len(t_m.group(1)) > 2:
-                    raw = t_m.group(1)
-                    try:
-                        text_val = raw.encode("utf-8").decode("unicode_escape")
-                    except (UnicodeDecodeError, ValueError):
-                        text_val = raw.replace("\\n", "\n").replace('\\"', '"')
+                    text_val = _decode_fb_text(t_m.group(1))
                     break
 
         # Pattern 2: "message":{"text":"..."}
@@ -605,11 +599,38 @@ def _extract_posts_from_scripts(
                     window,
                 )
                 if t_m and len(t_m.group(1)) > 5:
-                    raw = t_m.group(1)
-                    try:
-                        text_val = raw.encode("utf-8").decode("unicode_escape")
-                    except (UnicodeDecodeError, ValueError):
-                        text_val = raw.replace("\\n", "\n").replace('\\"', '"')
+                    text_val = _decode_fb_text(t_m.group(1))
+                    break
+
+        # Pattern 3: "message_text":"..." (alternative encoding used by some
+        # Facebook page variants)
+        if not text_val:
+            mt_m = re.search(
+                r'"message_text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+                block,
+            )
+            if mt_m and len(mt_m.group(1)) > 5:
+                text_val = _decode_fb_text(mt_m.group(1))
+
+        # Pattern 4: "text_value":"..." (used in some Comet payloads)
+        if not text_val:
+            tv_m = re.search(
+                r'"text_value"\s*:\s*"((?:[^"\\]|\\.)*)"',
+                block,
+            )
+            if tv_m and len(tv_m.group(1)) > 5:
+                text_val = _decode_fb_text(tv_m.group(1))
+
+        # Pattern 5: "content":{"text":"..."} (shared content blocks)
+        if not text_val:
+            for ct_m in re.finditer(r'"content"\s*:\s*\{', block):
+                window = block[ct_m.start():ct_m.start() + 3000]
+                t_m = re.search(
+                    r'"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+                    window,
+                )
+                if t_m and len(t_m.group(1)) > 5:
+                    text_val = _decode_fb_text(t_m.group(1))
                     break
 
         # Extract engagement counts — search the entire HTML for these,
@@ -619,8 +640,6 @@ def _extract_posts_from_scripts(
         shares = None
 
         # Search for feedback target associated with this post_id
-        # Pattern: "feedback":{"id":"BASE64_ID","...post_id is embedded in the base64"}
-        # Or: "post_id":"XXX", ... "reaction_count"
         for search_start in positions:
             search_end = min(len(html), search_start + 20000)
             search_block = html[search_start:search_end]
@@ -703,6 +722,27 @@ def _extract_posts_from_scripts(
         posts.append(post)
 
     return posts
+
+
+def _decode_fb_text(raw: str) -> Optional[str]:
+    """Decode a Facebook JSON-escaped text string.
+
+    Handles ``\\uXXXX`` Bengali/Arabic/other unicode escapes and standard
+    JSON escape sequences.  Returns ``None`` when the decoded result is
+    empty or whitespace-only.
+    """
+    try:
+        decoded = raw.encode("utf-8").decode("unicode_escape")
+    except (UnicodeDecodeError, ValueError):
+        # Fallback: manually decode common sequences
+        decoded = (
+            raw.replace("\\n", "\n")
+            .replace("\\r", "\r")
+            .replace("\\t", "\t")
+            .replace('\\"', '"')
+            .replace("\\\\", "\\")
+        )
+    return decoded.strip() or None
 
 
 # ===========================================================================
