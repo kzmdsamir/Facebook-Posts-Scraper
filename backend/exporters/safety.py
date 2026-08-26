@@ -27,6 +27,7 @@ ALLOWED_EXPORT_FILENAMES: dict[str, str] = {
     "csv": "facebook_posts.csv",
     "excel": "facebook_posts.xlsx",
     "xlsx": "facebook_posts.xlsx",
+    "jsonl": "facebook_posts.jsonl",
 }
 
 _SAFE_BASENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")

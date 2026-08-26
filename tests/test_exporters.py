@@ -151,4 +151,4 @@ def test_non_dict_post_rejected(tmp_path):
 
 
 def test_supported_formats_exposed():
-    assert SUPPORTED_FORMATS == ("json", "csv", "excel", "xlsx")
+    assert SUPPORTED_FORMATS == ("json", "csv", "excel", "xlsx", "jsonl")

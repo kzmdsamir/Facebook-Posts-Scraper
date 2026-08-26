@@ -45,7 +45,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from . import csv_exporter, json_exporter, xlsx_exporter
+from . import csv_exporter, json_exporter, jsonl_exporter, xlsx_exporter
 from .safety import ALLOWED_EXPORT_FILENAMES, assert_safe_relative_path, safe_filename
 
 __all__ = [
@@ -56,7 +56,7 @@ __all__ = [
     "safe_filename",
 ]
 
-SUPPORTED_FORMATS: tuple[str, ...] = ("json", "csv", "excel", "xlsx")
+SUPPORTED_FORMATS: tuple[str, ...] = ("json", "csv", "excel", "xlsx", "jsonl")
 
 
 def _load_posts_array(path: str | Path) -> list[dict[str, Any]]:
@@ -139,4 +139,6 @@ def export_posts(
         return json_exporter.export_json(posts, out_path)
     if key == "csv":
         return csv_exporter.export_csv(posts, out_path)
+    if key == "jsonl":
+        return jsonl_exporter.export_jsonl(posts, out_path)
     return xlsx_exporter.export_xlsx(posts, out_path, job_id=job_id)

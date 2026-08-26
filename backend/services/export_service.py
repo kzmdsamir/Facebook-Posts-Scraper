@@ -30,7 +30,7 @@ from backend.services import serialization
 
 logger = get_logger("services.export_service")
 
-EXPORT_FORMATS = ("json", "csv", "excel", "xlsx")
+EXPORT_FORMATS = ("json", "csv", "excel", "xlsx", "jsonl")
 
 # Default batch size for streaming exports (balances memory vs. DB round-trips)
 _BATCH_SIZE = 500
