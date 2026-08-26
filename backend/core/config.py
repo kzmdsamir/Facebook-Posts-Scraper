@@ -63,6 +63,21 @@ class Settings(BaseSettings):
     page_size_default: int = 50
     page_size_max: int = 200
 
+    # --- rate limiting / proxy (Phase 14-16) ------------------------------------
+    scraper_delay_seconds: float = 2.5
+    scraper_timeout_seconds: float = 20.0
+    scraper_max_retries: int = 3
+    scraper_robots: bool = True
+
+    # --- proxy support (optional) -----------------------------------------------
+    proxy_enabled: bool = False
+    proxy_url: str | None = None
+    proxy_urls: list[str] = []
+
+    # --- logging ----------------------------------------------------------------
+    log_level: str = "INFO"
+    log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
     def ensure_dirs(self) -> None:
         """Create runtime directories (data/, exports/)."""
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
