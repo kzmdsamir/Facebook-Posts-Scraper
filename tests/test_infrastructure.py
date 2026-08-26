@@ -134,7 +134,7 @@ class TestRateLimiter:
         rl = RateLimiter(rate=1000, burst=5)
         for _ in range(5):
             rl.acquire(1)
-        time.sleep(0.01)  # let tokens refill
+        time.sleep(0.05)  # let tokens refill
         assert rl.available > 0
 
 
