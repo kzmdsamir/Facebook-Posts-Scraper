@@ -17,6 +17,9 @@ export interface ScrapeRequest {
   start_date?: string | null;
   end_date?: string | null;
   post_type?: PostType | null;
+  use_browser?: boolean;
+  account?: string | null;
+  scrolls?: number | null;
 }
 
 /** POST /api/scrape response */
@@ -92,6 +95,44 @@ export interface PaginatedPosts {
   total: number;
   page: number;
   page_size: number;
+}
+
+/** One row in GET /api/jobs (history) */
+export interface JobSummary {
+  job_id: string;
+  status: JobStatus;
+  pages_total: number;
+  pages_completed: number;
+  posts_found: number;
+  posts_processed: number;
+  duplicates: number;
+  errors: number;
+  urls: string[];
+  max_posts?: number | null;
+  post_type?: string | null;
+  created_at?: string | null;
+  completed_at?: string | null;
+}
+
+/** GET /api/jobs response (paginated history) */
+export interface JobListResponse {
+  items: JobSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+/** Metadata row in GET /api/accounts */
+export interface AccountSession {
+  name: string;
+  cookies_file?: string | null;
+  saved_at?: string | null;
+}
+
+/** GET /api/accounts response */
+export interface AccountsResponse {
+  items: AccountSession[];
+  total: number;
 }
 
 /** Standard error body: {"error": {"code": "...", "message": "..."}} */
