@@ -40,6 +40,26 @@ class ScrapeRequest(BaseModel):
     post_type: str | None = Field(
         default=None, description="text | image | video | link | all"
     )
+    use_browser: bool = Field(
+        default=False,
+        description=(
+            "Use the Playwright browser scraper (captures Facebook's own "
+            "Comet /api/graphql/ feed; far more posts than the anonymous "
+            "HTML path, which is capped at ~5 by Facebook itself)."
+        ),
+    )
+    account: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Saved account name (see 'python cli.py login --account NAME'); "
+            "its cookies unlock the full logged-in feed. Leave empty to run "
+            "without cookies."
+        ),
+    )
+    scrolls: int | None = Field(
+        default=None, ge=1, le=300, description="Browser scroll rounds (default 40)"
+    )
 
     @field_validator("urls")
     @classmethod
@@ -92,6 +112,9 @@ class ScrapeOptionsOut(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     post_type: str | None = None
+    use_browser: bool = False
+    account: str | None = None
+    scrolls: int | None = None
 
 
 class ScrapeResponse(BaseModel):

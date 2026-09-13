@@ -24,8 +24,10 @@ from backend.models.posts import Post
 from backend.models.scrape_jobs import ScrapeJob
 from backend.schemas.jobs import (
     ErrorDetail,
+    JobListResponse,
     JobStatsResponse,
     JobStatusResponse,
+    JobSummary,
     PostOut,
     PostPageResponse,
 )
@@ -39,6 +41,51 @@ def _get_job_or_404(db: Session, job_id: str) -> ScrapeJob:
     if job is None:
         raise NotFoundError(f"Job {job_id} not found")
     return job
+
+
+@router.get(
+    "/jobs",
+    response_model=JobListResponse,
+    summary="List recent jobs (paginated)",
+)
+def list_jobs(
+    page: int = Query(1, ge=1, description="1-based page number"),
+    page_size: int = Query(25, ge=1, le=100, description="Items per page (max 100)"),
+    db: Session = Depends(get_db),
+) -> JobListResponse:
+    """Return job history, newest first."""
+    settings = get_settings()
+    page_size = min(page_size, settings.page_size_max)
+
+    total = int(db.scalar(select(func.count()).select_from(ScrapeJob)) or 0)
+    jobs = db.scalars(
+        select(ScrapeJob)
+        .order_by(ScrapeJob.created_at.desc(), ScrapeJob.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+
+    items = [
+        JobSummary(
+            job_id=job.id,
+            status=job.status
+            if job.status in ("queued", "running", "completed", "failed")
+            else "failed",
+            pages_total=job.pages_total,
+            pages_completed=job.pages_completed,
+            posts_found=job.posts_found,
+            posts_processed=job.posts_processed,
+            duplicates=job.duplicates,
+            errors=job.errors_count,
+            urls=list(job.options.get("urls") or []) if job.options else [],
+            max_posts=job.options.get("max_posts") if job.options else None,
+            post_type=job.options.get("post_type") if job.options else None,
+            created_at=serialization.iso_format(job.created_at),
+            completed_at=serialization.iso_format(job.completed_at),
+        )
+        for job in jobs
+    ]
+    return JobListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get(
