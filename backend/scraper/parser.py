@@ -43,10 +43,11 @@ Parser policy
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
@@ -54,6 +55,7 @@ from bs4 import BeautifulSoup, Tag
 __all__ = [
     "ParsedPage",
     "ParsedPost",
+    "extract_posts_from_graphql",
     "parse_page",
     "parse_timestamp",
     "parse_count",
@@ -88,8 +90,14 @@ _ABS_FORMATS = [
     "%b %d, %Y",
     "%d %B %Y at %H:%M",
     "%d %b %Y at %H:%M",
+    "%d %B at %H:%M",
+    "%d %b at %H:%M",
+    "%d %B at %I:%M %p",
+    "%d %b at %I:%M %p",
     "%d %B %Y",
     "%d %b %Y",
+    "%d %B",
+    "%d %b",
     "%Y-%m-%dT%H:%M:%S%z",
     "%Y-%m-%dT%H:%M:%S",
     "%Y-%m-%d %H:%M:%S",
@@ -724,6 +732,244 @@ def _extract_posts_from_scripts(
     return posts
 
 
+#: marker attribute (full name incl. ``data-`` prefix) used on <script>
+#: blocks that carry raw Comet GraphQL /api/graphql/ feed payloads captured
+#: from the browser network.
+_GRAPHQL_SCRIPT_MARKER = "data-fb-graphql-feed"
+
+
+def _iter_json_objects(text: str):
+    """Yield top-level JSON values from a concatenated JSON body.
+
+    Facebook's ``/api/graphql/`` responses are frequently several JSON
+    documents serially concatenated (one per query/mutation result).
+    """
+    decoder = json.JSONDecoder()
+    i = 0
+    while i < len(text):
+        while i < len(text) and text[i] in " \n\t\r":
+            i += 1
+        if i >= len(text):
+            break
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except (ValueError, json.JSONDecodeError):
+            break
+        yield obj
+        i = end
+
+
+def _graphql_story_nodes(payload) -> List[dict]:
+    """Flatten ``/api/graphql/`` response objects into candidate story dicts.
+
+    Looks for ``data.node`` entries of ``__typename`` ``Story`` plus the
+    ``data.node.timeline_list_feed_units.edges[].node`` list.
+    """
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return []
+    node = data.get("node")
+    found: List[dict] = []
+    if isinstance(node, dict):
+        if node.get("__typename") == "Story" and node.get("post_id"):
+            found.append(node)
+        tl = node.get("timeline_list_feed_units")
+        if isinstance(tl, dict):
+            for edge in tl.get("edges") or []:
+                child = edge.get("node") if isinstance(edge, dict) else None
+                if isinstance(child, dict) and child.get("post_id"):
+                    found.append(child)
+    return found
+
+
+def _graphql_story_to_post(story: dict, page_url: str) -> Optional[ParsedPost]:
+    """Build a :class:`ParsedPost` from one Comet feed story node."""
+    post_id = str(story.get("post_id") or "").strip()
+    if not post_id:
+        return None
+
+    published_at: Optional[datetime] = None
+    ct = story.get("creation_time")
+    if isinstance(ct, (int, float)):
+        published_at = datetime.fromtimestamp(int(ct), tz=timezone.utc)
+    published_raw = str(int(ct)) if isinstance(ct, (int, float)) else None
+
+    permalink = story.get("permalink_url")
+    post_url = None
+    if permalink:
+        abs_url = urljoin(page_url, str(permalink))
+        if abs_url.startswith("http"):
+            post_url = abs_url
+
+    text_val: Optional[str] = None
+    story_render = story
+    if isinstance(story_render.get("comet_sections"), dict):
+        content = story_render["comet_sections"].get("content")
+        if isinstance(content, dict):
+            inner = content.get("story")
+            if isinstance(inner, dict):
+                story_render = inner
+    msg = story_render.get("message")
+    if isinstance(msg, dict):
+        text_val = msg.get("text") or None
+    elif isinstance(msg, str) and msg.strip():
+        text_val = msg
+    if not text_val:
+        alt = story_render.get("text")
+        if isinstance(alt, str) and alt.strip():
+            text_val = alt
+
+    reactions = comments_count = shares = 0
+    for node in (story, story_render):
+        fb = node.get("feedback") if isinstance(node, dict) else None
+        if not isinstance(fb, dict):
+            continue
+        def _grab_int(key: str) -> Optional[int]:
+            v = fb.get(key)
+            if isinstance(v, dict) and isinstance(v.get("count"), (int, float)):
+                return int(v["count"])
+            if v is None:
+                v = fb.get(key.replace("_count", ""))
+            if isinstance(v, dict) and isinstance(v.get("total_count"), (int, float)):
+                return int(v["total_count"])
+            return int(v) if isinstance(v, (int, float)) else None
+
+        rc = _grab_int("reaction_count")
+        if rc is not None:
+            reactions = rc
+        cc = _grab_int("comment_total_count")
+        if cc is None:
+            cc = _grab_int("comment_widget_total_comment_count")
+        if cc is not None:
+            comments_count = cc
+        sc = _grab_int("share_count")
+        if sc is not None:
+            shares = sc
+
+    # Counts may sit deeper inside the story renderer (e.g. comet_sections).
+    def _deep_counts(obj: Any, key_prefix: str) -> List[int]:
+        hits = []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k.startswith(key_prefix) and isinstance(v, dict) \
+                        and isinstance(v.get("count"), (int, float)):
+                    hits.append(int(v["count"]))
+                hits.extend(_deep_counts(v, key_prefix))
+        elif isinstance(obj, list):
+            for it in obj:
+                hits.extend(_deep_counts(it, key_prefix))
+        return hits
+
+    if reactions == 0:
+        rc = _deep_counts(story, "reaction_count")
+        if rc:
+            reactions = rc[0]
+    if comments_count == 0:
+        cc = _deep_counts(story, "comment_total_count") \
+            or _deep_counts(story, "comment_widget_total_comment_count")
+        if cc:
+            comments_count = cc[0]
+    if shares == 0:
+        sc = _deep_counts(story, "share_count")
+        if sc:
+            shares = sc[0]
+
+    likes = reactions or 0
+
+    has_image = has_video = False
+    thumbnail_url = media_url = video_url = None
+    for att in story.get("attachments") or []:
+        if not isinstance(att, dict):
+            continue
+        media = att.get("media")
+        if not isinstance(media, dict):
+            continue
+        typename = media.get("__typename") or ""
+        img = media.get("image") or media.get("target_image") or {}
+        uri = (img.get("uri") if isinstance(img, dict) else None) or media.get("uri")
+        if uri:
+            if "Video" in typename or media.get("playable_url"):
+                has_video = True
+                video_url = media.get("playable_url") or uri
+                thumbnail_url = uri
+            else:
+                has_image = True
+                if not thumbnail_url:
+                    thumbnail_url = uri
+                if not media_url:
+                    media_url = uri
+        if not uri and isinstance(media.get("image"), dict):
+            uri2 = media.get("image", {}).get("uri")
+            if uri2:
+                has_image = True
+                if not thumbnail_url:
+                    thumbnail_url = uri2
+
+    external_links = [
+        l for l in re.findall(r"(https?://[^\s\"'<>]+)", text_val or "")
+        if "facebook.com" not in l.lower()
+    ]
+    mentions = re.findall(r"@([A-Za-z0-9_.\-]+)", text_val or "")
+
+    return ParsedPost(
+        post_id=post_id,
+        post_url=post_url,
+        text=text_val,
+        published_at=published_at,
+        published_at_raw=published_raw,
+        reactions=reactions,
+        likes=likes,
+        comments_count=comments_count,
+        shares=shares,
+        has_image=has_image,
+        has_video=has_video,
+        has_link_preview=False,
+        thumbnail_url=thumbnail_url,
+        media_url=media_url,
+        video_url=video_url,
+        external_links=external_links,
+        mentions=mentions,
+    )
+
+
+def extract_posts_from_graphql(html: str, page_url: str) -> List[ParsedPost]:
+    """Extract posts from embedded ``/api/graphql/`` feed payloads.
+
+    ``fetch_with_browser`` captures the browser's own Comet feed API responses
+    and stores each one inside a ``<script type="application/json"
+    data-fb-graphql-feed="1">…</script>`` block of the returned snapshot.
+    Each response is a sequence of JSON documents; story nodes carry
+    ``post_id``, ``creation_time``, the rendered ``message.text``, media
+    attachments and engagement counts.  This intentionally complements (not
+    replaces) the DOM/script heuristics used for anonymous public pages.
+    """
+    if not html or '"post_id"' not in html:
+        return []
+    soup = BeautifulSoup(html, "lxml")
+    posts: List[ParsedPost] = []
+    seen: set = set()
+    for tag in soup.find_all("script", attrs={_GRAPHQL_SCRIPT_MARKER: True}):
+        raw = tag.get_text()
+        if not raw or '"post_id"' not in raw:
+            continue
+        for obj in _iter_json_objects(raw):
+            for story in _graphql_story_nodes(obj):
+                pid = str(story.get("post_id") or "")
+                if pid and pid in seen:
+                    continue
+                if pid:
+                    seen.add(pid)
+                try:
+                    post = _graphql_story_to_post(story, page_url)
+                except Exception:  # one bad node must not kill the batch
+                    continue
+                if post and (post.post_id or post.text):
+                    posts.append(post)
+    return posts
+
+
 def _decode_fb_text(raw: str) -> Optional[str]:
     """Decode a Facebook JSON-escaped text string.
 
@@ -847,15 +1093,31 @@ def _post_time(root: Tag, now: datetime) -> Tuple[Optional[datetime], Optional[s
             if dt:
                 return dt, label
 
-    # 5. strict text scan: month names / 4-digit year / "ago" / "yesterday"
+    # 5. strict text scan: month names / 4-digit year / relative units / "ago"
     text = root.get_text(" ", strip=True)
     strict = re.compile(
         r"\b(january|february|march|april|may|june|july|august|september|"
         r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|"
-        r"oct|nov|dec|20\d{2}|\d{1,2}\s+ago|ago|yesterday|just now|now)\b",
+        r"oct|nov|dec|20\d{2}|\d{1,2}\s+ago|ago|yesterday|just now|now|"
+        r"\d{1,3}\s*[smhdw]\s*(ago)?)\b",
         re.I,
     )
     for m in strict.finditer(text):
+        token = m.group(0)
+        if re.fullmatch(r"\d{1,3}\s*[smhdw]\s*(ago)?", token, re.I):
+            dt = parse_timestamp(token, now=now)
+            if dt:
+                return dt, token.strip()
+        # absolute dates ("31 August at 21:29"): parse_timestamp needs a
+        # fullmatch, so wide snippets clip at the real date boundary by
+        # trying shrinking prefixes of the date region.
+        if re.match(r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*",
+                    token, re.I):
+            region = text[max(0, m.start() - 8): m.start() + 36]
+            for end in range(len(region), 6, -1):
+                dt = parse_timestamp(region[:end].strip(), now=now)
+                if dt:
+                    return dt, region[:end].strip()
         snippet = text[max(0, m.start() - 12): m.end() + 24]
         dt = parse_timestamp(snippet, now=now)
         if dt:
@@ -925,6 +1187,7 @@ def _post_media(root: Tag, page_url: str) -> Dict[str, object]:
     """Extract image / video media signals from the post container."""
     out: Dict[str, object] = {
         "has_image": False, "has_video": False,
+        "has_link_preview": False,
         "thumbnail_url": None, "media_url": None, "video_url": None,
     }
 
@@ -1026,7 +1289,10 @@ def _post_engagement(root: Tag) -> Dict[str, Optional[int]]:
     }
 
     counts["comments_count"] = _count_near(text, ("comment",))
-    counts["shares"] = _count_near(text, ("share",))
+    # "X shares" — use a precise pattern so "Shared with Public 13m" doesn't
+    # read the relative time (13m) as 13,000,000 shares.
+    share_m = re.search(r"(\d[\d.,]*\s*[km]?)\s*shares?\b", text, re.I)
+    counts["shares"] = parse_count(share_m.group(1)) if share_m else None
     counts["views_count"] = _count_near(text, ("view",))
     counts["reactions"] = _count_near(
         text, ("all reactions", "reacted", "reactions"))
