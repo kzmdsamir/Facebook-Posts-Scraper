@@ -99,9 +99,16 @@ def load_cookies(account_name: str | None = None) -> Optional[list]:
     if account_name:
         creds = load_credentials()
         if account_name not in creds:
-            logger.warning("Account '%s' not found in credentials", account_name)
-            return None
-        path = CREDENTIALS_PATH.parent / creds[account_name]["cookies_file"]
+            # A login without --account is stored under the plain default
+            # file rather than the credentials index; fall back to it so
+            # account_name="default" still unlocks the session.
+            if account_name == "default":
+                path = COOKIES_PATH
+            else:
+                logger.warning("Account '%s' not found in credentials", account_name)
+                return None
+        else:
+            path = CREDENTIALS_PATH.parent / creds[account_name]["cookies_file"]
     else:
         path = COOKIES_PATH
 
@@ -186,10 +193,18 @@ def fetch_with_browser(
     cancel_event: Optional[threading.Event] = None,
     use_cookies: bool = True,
     account_name: Optional[str] = None,
+    progress_callback: Optional[Callable[..., None]] = None,
 ) -> str:
     """Load a Facebook page in a headless browser, scroll to load posts,
     and return the full rendered HTML."""
     from playwright.sync_api import sync_playwright
+
+    def _report(found: int) -> None:
+        if progress_callback:
+            try:
+                progress_callback(posts_found=found)
+            except Exception:
+                pass
 
     html_result = ""
     with sync_playwright() as p:
@@ -381,6 +396,9 @@ def fetch_with_browser(
                         len(graphql_payloads),
                         len(graphql_post_ids),
                     )
+                    _report(
+                        len(dom_pool) + len(script_pool) + len(graphql_post_ids)
+                    )
 
                 if max_posts is not None and (
                     len(dom_pool) + len(graphql_post_ids) >= max_posts
@@ -397,11 +415,21 @@ def fetch_with_browser(
                 + "</script>"
                 for payload in graphql_payloads
             )
+            # Append the final fully-scrolled DOM too. The accumulated roots
+            # and graphql blocks usually carry enough, but Facebook's feed is
+            # heavily virtualized and the last page state holds the freshest
+            # React/Relay store (scripts far larger than the snapshot cap) —
+            # the parser extracts far more from the whole document.
+            try:
+                final_dom = page.content()
+            except Exception:
+                final_dom = ""
             html_result = (
                 "<html><body>"
                 + "".join(dom_pool)
                 + "".join(script_pool)
                 + gql_blocks
+                + final_dom
                 + "</body></html>"
             )
             logger.info(
@@ -541,4 +569,157 @@ def parse_browser_page(
         posts=unique_posts,
         post_errors=post_errors,
         fetched_url=page_url,
+    )
+
+
+def scrape_source_browser(
+    url: str,
+    *,
+    max_posts: Optional[int] = None,
+    scroll_rounds: Optional[int] = None,
+    account_name: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    post_type: Optional[str] = None,
+    cancel_event: Optional[threading.Event] = None,
+    progress_callback: Optional[Callable[..., None]] = None,
+) -> "SourceResult":
+    """Scrape one source through the headless browser (GraphQL feed) and return
+    a :class:`~backend.scraper.SourceResult` with canonical normalized posts.
+
+    Mirrors the CLI ``--browser`` path so the job worker and the CLI share one
+    entry point.  ``scroll_rounds`` defaults to :data:`MAX_SCROLL_ROUNDS`.
+    ``start_date`` / ``end_date`` / ``post_type`` filter the results exactly
+    like the HTTP path (posts without a proven timestamp are skipped when a
+    date range is given).
+    """
+    from backend.scraper import ScrapeOptions, SourceResult, _handle_of, _passes_filters, validate_or_raise
+    from backend.scraper.dedup import dedup_posts
+    from backend.scraper.normalizer import normalize_post
+
+    def _is_wall(html: str) -> bool:
+        if not html:
+            return True
+        # Real feed content is the strongest signal — embedded React/Relay
+        # JSON contains "post_id" references; a wall has none.
+        if '"post_id"' in html:
+            return False
+        # A large rendered document that isn't the full feed but has no
+        # post markers (e.g. a fully-formed page) is still not a login wall.
+        if len(html) > 100000:
+            return False
+        # classic login wall markers on small stub pages
+        if 'input name="email"' in html or 'id="email"' in html:
+            return True
+        if 'checkpoint' in html.lower() and 'login' in html.lower():
+            return True
+        return True
+
+    errors: List[Dict[str, str]] = []
+    try:
+        normalized_url = validate_or_raise(url)
+    except Exception as exc:  # invalid URL -> per-job validation error
+        return SourceResult(
+            url=url,
+            errors=[{"url": url, "code": "invalid_url", "message": str(exc)}],
+        )
+
+    # Try up to 2 times — Facebook sometimes serves a login wall on first load.
+    html = ""
+    for attempt in range(2):
+        html = fetch_with_browser(
+            normalized_url,
+            max_posts=max_posts,
+            scroll_rounds=scroll_rounds if scroll_rounds is not None else MAX_SCROLL_ROUNDS,
+            cancel_event=cancel_event,
+            account_name=account_name,
+            progress_callback=progress_callback,
+        )
+        if html and not _is_wall(html):
+            break
+        logger.warning("Browser attempt %d: login wall detected, retrying...", attempt + 1)
+
+    if not html:
+        return SourceResult(
+            url=url,
+            errors=[
+                {"url": url, "code": "fetch_failed",
+                 "message": "Browser returned empty HTML after retries"}
+            ],
+        )
+    if _is_wall(html):
+        return SourceResult(
+            url=url,
+            errors=[
+                {"url": url, "code": "login_wall",
+                 "message": "Facebook login wall still present after retries. Run 'python cli.py login' to refresh cookies."}
+            ],
+        )
+
+    page = parse_browser_page(
+        html,
+        page_url=normalized_url,
+        handle=_handle_of(normalized_url),
+    )
+    if progress_callback:
+        try:
+            progress_callback(posts_found=len(page.posts), posts_extracted=len(page.posts))
+        except Exception:
+            pass
+
+    normalized: List[Dict[str, Any]] = []
+    for parsed_post in page.posts:
+        try:
+            normalized.append(
+                normalize_post(
+                    parsed_post,
+                    page_name=page.page_name,
+                    page_id=page.page_id,
+                    facebook_url=normalized_url,
+                )
+            )
+        except Exception as exc:
+            errors.append({
+                "post_url": parsed_post.post_url or url,
+                "code": "extraction_failure",
+                "message": f"normalize failed: {exc!r}",
+            })
+
+    kept, duplicates = dedup_posts(normalized)
+
+    filters = ScrapeOptions(
+        urls=[url],
+        start_date=start_date,
+        end_date=end_date,
+        post_type=post_type,
+    )
+    kept = [p for p in kept if _passes_filters(p, filters)]
+
+    if max_posts is not None and len(kept) > max_posts:
+        kept = kept[:max_posts]
+
+    if progress_callback:
+        try:
+            progress_callback(
+                posts_found=len(page.posts),
+                posts_extracted=len(kept),
+                duplicates_removed=duplicates,
+                posts_failed=len(page.post_errors) + len(errors),
+            )
+        except Exception:
+            pass
+
+    return SourceResult(
+        url=url,
+        page_name=page.page_name,
+        page_id=page.page_id,
+        posts=kept,
+        stats={
+            "posts_discovered": len(page.posts),
+            "posts_extracted": len(kept),
+            "duplicates_removed": duplicates,
+            "posts_skipped": 0,
+            "posts_failed": len(page.post_errors) + len(errors),
+        },
+        errors=[dict(e) for e in page.post_errors] + errors,
     )
