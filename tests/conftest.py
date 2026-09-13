@@ -65,6 +65,13 @@ def _check_environment() -> None:
 
 _check_environment()
 
+# Ensure tables exist even when no test uses the `client` fixture (which
+# triggers init_db() via the FastAPI lifespan).  Exporter unit tests, for
+# example, never touch the TestClient, so without this the autouse cleanup
+# fixture would try to DELETE from non-existent tables.
+from backend.core.database import init_db  # noqa: E402
+init_db()
+
 # Deletion order: children before parents (SQLite FK pragma is ON).
 _CLEANUP_MODELS = (
     "ExportJob",
