@@ -18,11 +18,10 @@ const FORMATS: Array<{
   title: string;
   description: string;
   icon: typeof FileJson;
-  tone: string;
 }> = [
-  { format: "json", title: "JSON", description: "Complete nested structure", icon: FileJson, tone: "text-emerald-500" },
-  { format: "csv", title: "CSV", description: "Flattened spreadsheet", icon: FileText, tone: "text-sky-500" },
-  { format: "excel", title: "Excel", description: "XLSX workbook, multiple sheets", icon: FileSpreadsheet, tone: "text-emerald-600 dark:text-emerald-400" },
+  { format: "json", title: "JSON", description: "Complete nested structure", icon: FileJson },
+  { format: "csv", title: "CSV", description: "Flattened spreadsheet", icon: FileText },
+  { format: "excel", title: "Excel", description: "XLSX workbook, multiple sheets", icon: FileSpreadsheet },
 ];
 
 export function ExportArea({ jobId, status, onNewScrape }: ExportAreaProps) {
@@ -43,10 +42,10 @@ export function ExportArea({ jobId, status, onNewScrape }: ExportAreaProps) {
               key={entry.format}
               href={api.getExportUrl(jobId, entry.format)}
               download={EXPORT_FILENAMES[entry.format]}
-              className="group rounded-xl border bg-card p-4 transition-colors hover:border-primary/50 hover:bg-muted/40"
+              className="group rounded-lg border bg-card p-4 transition-colors hover:bg-muted/60"
             >
               <div className="flex items-center gap-3">
-                <entry.icon className={`h-6 w-6 ${entry.tone}`} aria-hidden="true" />
+                <entry.icon className="h-6 w-6 text-foreground" aria-hidden="true" />
                 <div className="min-w-0">
                   <p className="text-sm font-semibold">↓ {entry.title}</p>
                   <p className="truncate text-xs text-muted-foreground">{entry.description}</p>

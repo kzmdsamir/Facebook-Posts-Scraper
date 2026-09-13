@@ -42,9 +42,9 @@ const NUMERIC_ACCESSORS: Record<Exclude<SortKey, "date">, keyof Pick<Post, "like
 
 const TYPE_BADGE: Record<string, BadgeVariant> = {
   text: "secondary",
-  image: "blue",
-  video: "purple",
-  link: "amber",
+  image: "secondary",
+  video: "secondary",
+  link: "secondary",
 };
 
 const PAGE_SIZES = [10, 20, 50, 100];
@@ -76,7 +76,7 @@ function MediaThumb({ post }: { post: Post }) {
       </span>
     );
   }
-  return <span className="w-10 shrink-0 text-center text-muted-foreground" aria-label="No media">—</span>;
+  return <span className="w-10 shrink-0 text-center text-muted-foreground" aria-label="No media">–</span>;
 }
 
 interface SortHeaderProps {
@@ -226,7 +226,7 @@ export function PostsTable({ posts, total, loading, loaded, error, onRetry, onSe
             <p className="max-w-sm text-xs text-muted-foreground">
               {query
                 ? "Try a different search term, or export the full dataset."
-                : "The job completed without posts — check the job status above or run a new scrape with different URLs."}
+                : "The job completed without posts. Check the job status above or run a new scrape with different URLs."}
             </p>
           </div>
         ) : (
@@ -267,7 +267,7 @@ export function PostsTable({ posts, total, loading, loaded, error, onRetry, onSe
                         <span title={post.published_at ?? undefined}>{formatDate(post.published_at ?? post.timestamp)}</span>
                       </td>
                       <td className="max-w-[160px] px-3 py-3">
-                        <p className="truncate font-medium" title={post.page_name ?? undefined}>{post.page_name ?? "—"}</p>
+                        <p className="truncate font-medium" title={post.page_name ?? undefined}>{post.page_name ?? "–"}</p>
                         {post.page_id ? <p className="truncate text-xs text-muted-foreground">ID {post.page_id}</p> : null}
                       </td>
                       <td className="max-w-[300px] px-3 py-3">
@@ -297,7 +297,7 @@ export function PostsTable({ posts, total, loading, loaded, error, onRetry, onSe
                             <ExternalLink className="h-4 w-4" aria-hidden="true" />
                           </a>
                         ) : (
-                          <span className="text-muted-foreground">—</span>
+                          <span className="text-muted-foreground">–</span>
                         )}
                       </td>
                     </tr>

@@ -5,12 +5,38 @@ const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./lib/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      fontFamily: {
+        sans: [
+          "var(--font-jost)",
+          "Jost",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Inter",
+          "Geist",
+          "Segoe UI",
+          "Roboto",
+          "Helvetica Neue",
+          "Arial",
+          "sans-serif",
+        ],
+        mono: [
+          "JetBrains Mono",
+          "Fira Code",
+          "Geist Mono",
+          "Consolas",
+          "ui-monospace",
+          "SFMono-Regular",
+          "Menlo",
+          "monospace",
+        ],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
+        highlight: "rgb(var(--highlight) / <alpha-value>)",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
@@ -43,9 +69,14 @@ const config: Config = {
         warning: "hsl(var(--warning))",
       },
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        DEFAULT: "0",
+        none: "0",
+        sm: "0",
+        md: "0",
+        lg: "0",
+        xl: "0",
+        "2xl": "0",
+        full: "9999px",
       },
       keyframes: {
         "fade-in": {
@@ -60,6 +91,10 @@ const config: Config = {
           from: { transform: "translateX(100%)" },
           to: { transform: "translateX(0)" },
         },
+        "slide-in-left": {
+          from: { transform: "translateX(-100%)" },
+          to: { transform: "translateX(0)" },
+        },
         indeterminate: {
           "0%": { transform: "translateX(-100%)" },
           "100%": { transform: "translateX(400%)" },
@@ -69,6 +104,7 @@ const config: Config = {
         "fade-in": "fade-in 160ms ease-out",
         "dialog-in": "dialog-in 200ms ease-out",
         "slide-in-right": "slide-in-right 260ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "slide-in-left": "slide-in-left 260ms cubic-bezier(0.16, 1, 0.3, 1)",
         indeterminate: "indeterminate 1.2s ease-in-out infinite",
       },
     },
