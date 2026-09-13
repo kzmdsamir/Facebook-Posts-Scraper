@@ -71,7 +71,7 @@ def scrape_browser(
 
     # Normalize and dedup
     normalized = []
-    errors_list = []
+    errors_list = [dict(e) for e in page.post_errors]
     for parsed_post in page.posts:
         try:
             post = normalize_post(
