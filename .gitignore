@@ -63,4 +63,4 @@ logs/
 .pytest-tmp/
 browser_posts.json
 posts.json
-posts.xlsx
+posts.xlsxnohup.out
