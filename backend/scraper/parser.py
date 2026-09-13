@@ -88,8 +88,14 @@ _ABS_FORMATS = [
     "%b %d, %Y",
     "%d %B %Y at %H:%M",
     "%d %b %Y at %H:%M",
+    "%d %B at %H:%M",
+    "%d %b at %H:%M",
+    "%d %B at %I:%M %p",
+    "%d %b at %I:%M %p",
     "%d %B %Y",
     "%d %b %Y",
+    "%d %B",
+    "%d %b",
     "%Y-%m-%dT%H:%M:%S%z",
     "%Y-%m-%dT%H:%M:%S",
     "%Y-%m-%d %H:%M:%S",
@@ -847,15 +853,31 @@ def _post_time(root: Tag, now: datetime) -> Tuple[Optional[datetime], Optional[s
             if dt:
                 return dt, label
 
-    # 5. strict text scan: month names / 4-digit year / "ago" / "yesterday"
+    # 5. strict text scan: month names / 4-digit year / relative units / "ago"
     text = root.get_text(" ", strip=True)
     strict = re.compile(
         r"\b(january|february|march|april|may|june|july|august|september|"
         r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|"
-        r"oct|nov|dec|20\d{2}|\d{1,2}\s+ago|ago|yesterday|just now|now)\b",
+        r"oct|nov|dec|20\d{2}|\d{1,2}\s+ago|ago|yesterday|just now|now|"
+        r"\d{1,3}\s*[smhdw]\s*(ago)?)\b",
         re.I,
     )
     for m in strict.finditer(text):
+        token = m.group(0)
+        if re.fullmatch(r"\d{1,3}\s*[smhdw]\s*(ago)?", token, re.I):
+            dt = parse_timestamp(token, now=now)
+            if dt:
+                return dt, token.strip()
+        # absolute dates ("31 August at 21:29"): parse_timestamp needs a
+        # fullmatch, so wide snippets clip at the real date boundary by
+        # trying shrinking prefixes of the date region.
+        if re.match(r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*",
+                    token, re.I):
+            region = text[max(0, m.start() - 8): m.start() + 36]
+            for end in range(len(region), 6, -1):
+                dt = parse_timestamp(region[:end].strip(), now=now)
+                if dt:
+                    return dt, region[:end].strip()
         snippet = text[max(0, m.start() - 12): m.end() + 24]
         dt = parse_timestamp(snippet, now=now)
         if dt:
@@ -925,6 +947,7 @@ def _post_media(root: Tag, page_url: str) -> Dict[str, object]:
     """Extract image / video media signals from the post container."""
     out: Dict[str, object] = {
         "has_image": False, "has_video": False,
+        "has_link_preview": False,
         "thumbnail_url": None, "media_url": None, "video_url": None,
     }
 
@@ -1026,7 +1049,10 @@ def _post_engagement(root: Tag) -> Dict[str, Optional[int]]:
     }
 
     counts["comments_count"] = _count_near(text, ("comment",))
-    counts["shares"] = _count_near(text, ("share",))
+    # "X shares" — use a precise pattern so "Shared with Public 13m" doesn't
+    # read the relative time (13m) as 13,000,000 shares.
+    share_m = re.search(r"(\d[\d.,]*\s*[km]?)\s*shares?\b", text, re.I)
+    counts["shares"] = parse_count(share_m.group(1)) if share_m else None
     counts["views_count"] = _count_near(text, ("view",))
     counts["reactions"] = _count_near(
         text, ("all reactions", "reacted", "reactions"))
