@@ -16,8 +16,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+import hashlib
 
 from bs4 import BeautifulSoup
+from backend.scraper.parser import find_post_roots
 
 logger = logging.getLogger("scraper.browser")
 
@@ -261,42 +263,153 @@ def fetch_with_browser(
                 if not load_cookies(account_name=account_name):
                     print("  WARNING: Hit Facebook login wall. Run 'python cli.py login' first.")
 
-            # Count initial posts
-            prev_count = page.evaluate("""
-                () => document.querySelectorAll('[role="article"]').length
-            """)
-            logger.info("Browser: initial article count: %d", prev_count)
+            # Page hub layout: click the "All" / "Posts" timeline tab so the
+            # real feed renders, else scroll only works on a thin stub.
+            try:
+                clicked = page.evaluate("""
+                    () => {
+                        const els = Array.from(document.querySelectorAll('[role="tab"]'));
+                        const t = els.find(e => /^\\s*(All|Posts)\\s*$/i.test((e.innerText || "").trim()));
+                        if (t) { t.click(); return true; }
+                        return false;
+                    }
+                """)
+                if clicked:
+                    page.wait_for_timeout(1500)
+            except Exception:
+                pass
 
-            # Scroll to load more posts
+            # Scroll to load more posts. Facebook virtualizes the feed: only a
+            # few cards stay mounted at a time while scrolling, so we must
+            # snapshot each round and accumulate the unique post containers
+            # rather than grab a single final page.content() (which would only
+            # hold whatever is mounted at scroll-end).
+            def _snapshot_fingerprint(text: str) -> str:
+                return hashlib.sha1(
+                    text.encode("utf-8", "surrogatepass")
+                ).hexdigest()[:24]
+
+            # Facebook's Comet feed loads the next batch of stories via
+            # POST /api/graphql/ responses, not new DOM in the page.  Capture
+            # those payloads (they carry full post IDs, timestamps, texts and
+            # engagement counts) and embed them into the returned snapshot.
+            graphql_payloads: List[str] = []
+            graphql_post_ids: set = set()
+
+            def _on_response(response):
+                try:
+                    if not response.url.endswith("/api/graphql/"):
+                        return
+                    body = response.text()
+                except Exception:
+                    return
+                if '"post_id"' not in body or "creation_time" not in body:
+                    return
+                new_ids = set(
+                    re.findall(r'"post_id"\s*:\s*"(\d+)"', body)
+                )
+                if not new_ids - graphql_post_ids:
+                    return
+                graphql_post_ids.update(new_ids)
+                graphql_payloads.append(body)
+
+            page.on("response", _on_response)
+
+            dom_pool: List[str] = []
+            dom_seen: set = set()
+            script_pool: List[str] = []
+            script_seen: set = set()
             stale_rounds = 0
+
             for i in range(scroll_rounds):
                 if cancel_event and cancel_event.is_set():
                     break
 
+                gql_before = len(graphql_post_ids)
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(int(SCROLL_DELAY * 1000))
 
-                post_count = page.evaluate("""
-                    () => document.querySelectorAll('[role="article"]').length
-                """)
+                soup = BeautifulSoup(page.content(), "lxml")
+                roots = find_post_roots(soup)
+                fresh_new = 0
 
-                if post_count == prev_count:
+                for root in roots:
+                    aria = root.get("aria-label") or ""
+                    if aria.startswith("Comment by"):
+                        continue
+                    text = root.get_text(" ", strip=True)[:4000]
+                    if not text or len(text) < 20:
+                        continue
+                    # Drop comment previews rendered inside the feed (they look
+                    # like "Name · 2h … Like Reply").
+                    if re.search(r"\bLike\s*Reply\b", text):
+                        continue
+                    key = _snapshot_fingerprint(text)
+                    if key in dom_seen:
+                        continue
+                    dom_seen.add(key)
+                    dom_pool.append(str(root))
+                    fresh_new += 1
+
+                # Capture embedded Comet/Relay JSON that carries post data.
+                for tag in soup.find_all("script"):
+                    data = tag.string or ""
+                    if '"post_id"' in data and len(data) < 200_000:
+                        key = _snapshot_fingerprint(data)
+                        if key in script_seen:
+                            continue
+                        script_seen.add(key)
+                        script_pool.append(str(tag))
+                        fresh_new += 1
+
+                if fresh_new == 0 and len(graphql_post_ids) == gql_before:
                     stale_rounds += 1
                     if stale_rounds >= 3:
-                        logger.info("Browser: no new posts after %d scrolls, stopping", i)
+                        logger.info(
+                            "Browser: no new posts after %d scrolls, stopping", i
+                        )
                         break
                 else:
                     stale_rounds = 0
-                    logger.info("Browser: scroll %d - %d articles loaded", i + 1, post_count)
+                    logger.info(
+                        "Browser: scroll %d - %d posts accumulated "
+                        "(%d DOM, %d script, %d graphql responses, %d post_ids)",
+                        i + 1,
+                        len(dom_pool) + len(script_pool) + len(graphql_post_ids),
+                        len(dom_pool),
+                        len(script_pool),
+                        len(graphql_payloads),
+                        len(graphql_post_ids),
+                    )
 
-                prev_count = post_count
-
-                if max_posts is not None and post_count >= max_posts:
-                    logger.info("Browser: reached %d articles (target: %d)", post_count, max_posts)
+                if max_posts is not None and (
+                    len(dom_pool) + len(graphql_post_ids) >= max_posts
+                ):
+                    logger.info(
+                        "Browser: reached %d posts (target: %d)",
+                        len(dom_pool) + len(graphql_post_ids), max_posts,
+                    )
                     break
 
-            html_result = page.content()
-            logger.info("Browser: got %d bytes of HTML", len(html_result))
+            gql_blocks = "".join(
+                '<script type="application/json" data-fb-graphql-feed="1">'
+                + payload
+                + "</script>"
+                for payload in graphql_payloads
+            )
+            html_result = (
+                "<html><body>"
+                + "".join(dom_pool)
+                + "".join(script_pool)
+                + gql_blocks
+                + "</body></html>"
+            )
+            logger.info(
+                "Browser: accumulated snapshot %d bytes (%d DOM, %d script, "
+                "%d graphql blocks)",
+                len(html_result), len(dom_pool), len(script_pool),
+                len(graphql_payloads),
+            )
 
         except Exception as exc:
             logger.warning("Browser error: %s", exc)
@@ -316,7 +429,6 @@ def parse_browser_page(
         ParsedPage,
         ParsedPost,
         parse_page,
-        find_post_roots,
         _parse_post_root,
         _clean_name,
         _meta_content,
@@ -365,10 +477,30 @@ def parse_browser_page(
             "message": f"script extraction failed: {exc!r}",
         })
 
-    # Merge: use script posts as primary (they have richer data),
-    # add any DOM posts whose post_id isn't already found in script results
+    # Rich Comet feed payloads captured from the browser's own /api/graphql/
+    # requests (post IDs, exact timestamps, texts and engagement counts).
+    from backend.scraper.parser import extract_posts_from_graphql
+    gql_posts = []
+    try:
+        gql_posts = extract_posts_from_graphql(html, page_url)
+    except Exception as exc:
+        post_errors.append({
+            "post_url": "",
+            "code": "extraction_failure",
+            "message": f"graphql extraction failed: {exc!r}",
+        })
+
+    # Merge: use graphql posts as primary (richest data), then script posts
+    # whose id isn't already covered, then DOM posts not yet seen.
     seen_ids = set()
+    for post in gql_posts:
+        if post.post_id:
+            seen_ids.add(post.post_id)
+        posts.append(post)
+
     for post in script_posts:
+        if post.post_id and post.post_id in seen_ids:
+            continue
         if post.post_id:
             seen_ids.add(post.post_id)
         posts.append(post)
@@ -388,6 +520,13 @@ def parse_browser_page(
             continue
         seen.add(pid)
         unique_posts.append(post)
+
+    # Drop unidentifiable containers (FB renders empty teaser divs)
+    def _has_signal(post) -> bool:
+        return bool(post.post_id or post.text or post.thumbnail_url
+                    or post.media_url or post.video_url
+                    or post.has_image or post.has_video)
+    unique_posts = [p for p in unique_posts if _has_signal(p)]
 
     logger.info(
         "Browser parse: %d DOM roots, %d posts (deduped), %d errors",
