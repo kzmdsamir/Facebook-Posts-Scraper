@@ -62,11 +62,37 @@ _HASHTAG_RE = re.compile(r"#([A-Za-z0-9_\u0080-\uFFFF]+)")
 _MENTION_RE = re.compile(r"@([A-Za-z0-9_.\-\u0080-\uFFFF]+)")
 
 
+def _fix_surrogates(text: str) -> str:
+    """Repair HTML-entity-decoded surrogate halves into valid UTF-8 text.
+    """
+    if not any(0xD800 <= ord(ch) <= 0xDFFF for ch in text):
+        return text
+    out: List[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        code = ord(text[i])
+        if 0xD800 <= code <= 0xDBFF and i + 1 < n:
+            low = ord(text[i + 1])
+            if 0xDC00 <= low <= 0xDFFF:
+                cp = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+                out.append(chr(cp))
+                i += 2
+                continue
+        if 0xD800 <= code <= 0xDFFF:
+            out.append("\uFFFD")
+        else:
+            out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
 def clean_text(raw: Optional[str]) -> Optional[str]:
-    """Collapse whitespace and strip control characters."""
+    """Collapse whitespace, strip control characters, and repair
+    surrogate halves (emoji from HTML entities) into valid UTF-8."""
     if raw is None:
         return None
-    text = " ".join(str(raw).split())
+    text = _fix_surrogates(str(raw))
+    text = " ".join(text.split())
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text).strip()
     return text or None
 
@@ -244,4 +270,10 @@ def normalize_post(
         "transcript_language": None,     # never public on HTML pages
         "scraped_at": scraped_at_iso,
     }
+    for key, value in list(post.items()):
+        if isinstance(value, str):
+            post[key] = _fix_surrogates(value)
+        elif isinstance(value, list):
+            post[key] = [_fix_surrogates(v) if isinstance(v, str) else v
+                         for v in value]
     return post
