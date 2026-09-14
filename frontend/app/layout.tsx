@@ -10,13 +10,38 @@ const jost = Jost({
   display: "swap",
 });
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: {
     default: "Facebook Posts Scraper",
     template: "%s · Facebook Posts Scraper",
   },
   description:
     "Extract publicly available Facebook page and profile posts with live progress tracking, preview, and JSON / CSV / Excel export. Throttled and compliant, no auth bypass.",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    url: SITE_URL,
+    siteName: "Facebook Posts Scraper",
+    title: "Facebook Posts Scraper",
+    description:
+      "Extract publicly available Facebook page and profile posts with live progress tracking, preview, and JSON / CSV / Excel export. Throttled and compliant, no auth bypass.",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Facebook Posts Scraper",
+    description:
+      "Extract publicly available Facebook posts with live progress tracking and JSON / CSV / Excel export.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export const viewport: Viewport = {
