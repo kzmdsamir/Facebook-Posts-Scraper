@@ -377,11 +377,16 @@ def fetch_with_browser(
                         script_pool.append(str(tag))
                         fresh_new += 1
 
+                # When the Comet feed is unreachable (login wall), the only
+                # posts come from the rendered DOM; keep scrolling longer
+                # instead of giving up after only 3 quiet rounds.
+                stale_limit = 3 if graphql_post_ids else 6
                 if fresh_new == 0 and len(graphql_post_ids) == gql_before:
                     stale_rounds += 1
-                    if stale_rounds >= 3:
+                    if stale_rounds >= stale_limit:
                         logger.info(
-                            "Browser: no new posts after %d scrolls, stopping", i
+                            "Browser: no new posts after %d scrolls, stopping",
+                            stale_rounds,
                         )
                         break
                 else:
@@ -424,11 +429,21 @@ def fetch_with_browser(
                 final_dom = page.content()
             except Exception:
                 final_dom = ""
+            # Marker: the Comet feed (graphql blocks generally carry the real
+            # timeline) never loaded.  A handful of DOM stubs alone means a
+            # partial/walled view, and the caller should not report it as a
+            # clean scrape.
+            feed_marker = (
+                "<!-- fb-scrape-feed-missing -->"
+                if not graphql_payloads
+                else ""
+            )
             html_result = (
                 "<html><body>"
                 + "".join(dom_pool)
                 + "".join(script_pool)
                 + gql_blocks
+                + feed_marker
                 + final_dom
                 + "</body></html>"
             )
@@ -624,7 +639,9 @@ def scrape_source_browser(
             errors=[{"url": url, "code": "invalid_url", "message": str(exc)}],
         )
 
-    # Try up to 2 times — Facebook sometimes serves a login wall on first load.
+    # Try up to 2 times — Facebook sometimes serves a login wall on first
+    # load.  Attempt 1 uses the saved session; if that walls, attempt 2
+    # retries with an anonymous context (FB sometimes leaks the full feed).
     html = ""
     for attempt in range(2):
         html = fetch_with_browser(
@@ -633,6 +650,7 @@ def scrape_source_browser(
             scroll_rounds=scroll_rounds if scroll_rounds is not None else MAX_SCROLL_ROUNDS,
             cancel_event=cancel_event,
             account_name=account_name,
+            use_cookies=(attempt == 0),
             progress_callback=progress_callback,
         )
         if html and not _is_wall(html):
@@ -661,6 +679,23 @@ def scrape_source_browser(
         page_url=normalized_url,
         handle=_handle_of(normalized_url),
     )
+    # The saved session page never yielded the GraphQL feed (only DOM
+    # stubs).  Surface it as a partial result instead of a clean scrape so
+    # the caller knows the post set is incomplete.
+    if "fb-scrape-feed-missing" in html and page.posts:
+        logger.warning(
+            "Browser: feed missing for %s — only %d DOM-only post(s) recovered",
+            normalized_url, len(page.posts),
+        )
+        errors.append({
+            "url": url,
+            "code": "partial_feed",
+            "message": (
+                "Facebook's timeline feed was not loaded (login wall / "
+                "limited session); only DOM-rendered posts were recovered. "
+                "Refresh cookies with 'python cli.py login' and retry."
+            ),
+        })
     if progress_callback:
         try:
             progress_callback(posts_found=len(page.posts), posts_extracted=len(page.posts))
