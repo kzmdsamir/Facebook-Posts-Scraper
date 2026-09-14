@@ -99,6 +99,33 @@ class PostPageResponse(BaseModel):
     page_size: int
 
 
+class JobSummary(BaseModel):
+    """One row in the job history list (GET /api/jobs)."""
+
+    job_id: str
+    status: JOB_STATUS
+    pages_total: int
+    pages_completed: int
+    posts_found: int
+    posts_processed: int
+    duplicates: int
+    errors: int
+    urls: list[str] = Field(default_factory=list)
+    max_posts: int | None = None
+    post_type: str | None = None
+    created_at: str | None = None
+    completed_at: str | None = None
+
+
+class JobListResponse(BaseModel):
+    """Paginated job history (GET /api/jobs)."""
+
+    items: list[JobSummary]
+    total: int
+    page: int
+    page_size: int
+
+
 class JobStatsResponse(BaseModel):
     """Aggregated KPIs for the dashboard (bonus endpoint, see services/stats.py)."""
 

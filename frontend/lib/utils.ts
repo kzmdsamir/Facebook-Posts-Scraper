@@ -10,7 +10,7 @@ const numberFmt = new Intl.NumberFormat("en-US");
 
 /** Full number formatting: 1,284 */
 export function formatNumber(value: number | null | undefined): string {
-  if (value == null || Number.isNaN(value)) return "—";
+  if (value == null || Number.isNaN(value)) return "–";
   return numberFmt.format(value);
 }
 
@@ -21,7 +21,7 @@ const compactFmt = new Intl.NumberFormat("en-US", {
 
 /** Compact formatting for KPI cards: 1.2K */
 export function formatCompact(value: number | null | undefined): string {
-  if (value == null || Number.isNaN(value)) return "—";
+  if (value == null || Number.isNaN(value)) return "–";
   return compactFmt.format(value);
 }
 
@@ -53,12 +53,12 @@ export function parseDate(input: string | number | null | undefined): Date | nul
 
 export function formatDate(input: string | number | null | undefined): string {
   const date = parseDate(input);
-  return date ? dateFmt.format(date) : "—";
+  return date ? dateFmt.format(date) : "–";
 }
 
 export function formatDateTime(input: string | number | null | undefined): string {
   const date = parseDate(input);
-  return date ? dateTimeFmt.format(date) : "—";
+  return date ? dateTimeFmt.format(date) : "–";
 }
 
 export function pluralize(count: number, singular: string): string {

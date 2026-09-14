@@ -225,6 +225,74 @@ def test_delete_job_204_then_404(client, monkeypatch):
     assert client.get(f"/api/jobs/{job_id}/posts").status_code == 404
 
 
+def test_list_jobs_empty(client):
+    resp = client.get("/api/jobs")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["items"] == []
+    assert body["total"] == 0
+
+
+def test_list_jobs_returns_history_newest_first(client):
+    job_a = insert_completed_job(
+        sample_posts(1),
+        options={"urls": [PAGE_URL], "max_posts": 10, "post_type": "text"},
+    )
+    job_b = insert_completed_job(
+        sample_posts(1),
+        options={"urls": [PAGE_URL], "max_posts": 5, "post_type": "all"},
+    )
+    resp = client.get("/api/jobs")
+    assert resp.status_code == 200
+    body = resp.json()
+    ids = [item["job_id"] for item in body["items"]]
+    assert job_b in ids and job_a in ids
+    assert len(body["items"]) == body["total"]
+
+    summary = body["items"][0]
+    assert set(summary) >= {
+        "job_id",
+        "status",
+        "pages_total",
+        "pages_completed",
+        "posts_found",
+        "posts_processed",
+        "duplicates",
+        "errors",
+        "urls",
+        "max_posts",
+        "post_type",
+        "created_at",
+        "completed_at",
+    }
+    assert summary["status"] == "completed"
+    assert summary["urls"] == [PAGE_URL]
+
+
+def test_list_jobs_pagination(client):
+    for _ in range(3):
+        insert_completed_job(sample_posts(1))
+    resp = client.get("/api/jobs?page=1&page_size=2")
+    body = resp.json()
+    assert body["total"] == 3
+    assert len(body["items"]) == 2
+    assert resp.json()["page_size"] == 2
+
+    resp2 = client.get("/api/jobs?page=2&page_size=2")
+    assert len(resp2.json()["items"]) == 1
+
+
+def test_list_accounts_empty_and_404_delete(client):
+    resp = client.get("/api/accounts")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "items" in body and "total" in body
+
+    resp_delete = client.delete("/api/accounts/ghost")
+    assert resp_delete.status_code == 404
+    error_envelope(resp_delete.json())
+
+
 def test_delete_unknown_job_404(client):
     resp = client.delete("/api/jobs/ghost")
     assert resp.status_code == 404

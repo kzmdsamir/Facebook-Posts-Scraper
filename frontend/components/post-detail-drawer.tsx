@@ -39,7 +39,7 @@ const REACTIONS: Array<{ key: keyof Post; emoji: string; label: string }> = [
 function Section({ label, children }: { label: string; children: ReactNode }) {
   return (
     <section className="border-t pt-4">
-      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</h4>
+      <h4 className="mb-2 text-xs font-medium text-muted-foreground">{label}</h4>
       {children}
     </section>
   );
@@ -48,8 +48,8 @@ function Section({ label, children }: { label: string; children: ReactNode }) {
 function MetaItem({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div className="min-w-0">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="break-words font-mono text-xs">{value ?? "—"}</p>
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className="break-words font-mono text-xs">{value ?? "–"}</p>
     </div>
   );
 }
@@ -85,8 +85,8 @@ export function PostDetailDrawer({ post, open, onClose }: PostDetailDrawerProps)
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Post details">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-fade-in" onClick={onClose} aria-hidden="true" />
-      <aside className="relative z-10 flex h-full w-full max-w-xl animate-slide-in-right flex-col border-l bg-background shadow-2xl">
+      <div className="absolute inset-0 bg-black/50 animate-fade-in" onClick={onClose} aria-hidden="true" />
+      <aside className="relative z-10 flex h-full w-full max-w-xl animate-slide-in-right flex-col border-l bg-background">
         {/* Header */}
         <header className="flex items-start justify-between gap-4 border-b px-5 py-4">
           <div className="min-w-0">
@@ -100,7 +100,7 @@ export function PostDetailDrawer({ post, open, onClose }: PostDetailDrawerProps)
                   {post.profile_url ?? post.facebook_url ?? "Profile"}
                 </a>
               ) : (
-                (post.profile_url ?? post.facebook_url ?? "—")
+                (post.profile_url ?? post.facebook_url ?? "–")
               )}
             </p>
           </div>
@@ -119,7 +119,7 @@ export function PostDetailDrawer({ post, open, onClose }: PostDetailDrawerProps)
               </div>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Clock className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>ts {post.timestamp != null ? post.timestamp : "—"}</span>
+                <span>ts {post.timestamp != null ? post.timestamp : "–"}</span>
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-3">

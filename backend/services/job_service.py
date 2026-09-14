@@ -262,6 +262,9 @@ def start_scrape_job(db, request: ScrapeRequest) -> ScrapeJob:
         "start_date": request.start_date,
         "end_date": request.end_date,
         "post_type": post_type,
+        "use_browser": request.use_browser,
+        "account": request.account,
+        "scrolls": request.scrolls,
     }
 
     job = ScrapeJob(
@@ -410,13 +413,27 @@ def _process_source(
         db.commit()
 
     try:
-        options = _build_scrape_options([source_url], options_snapshot)
-        result = scraper.scrape_source(
-            source_url,
-            options,
-            _make_progress_callback(job_id, source_id),
-            token.event if token else None,
-        )
+        if options_snapshot.get("use_browser"):
+            from backend.scraper.browser_scraper import scrape_source_browser
+            result = scrape_source_browser(
+                source_url,
+                max_posts=options_snapshot.get("max_posts"),
+                scroll_rounds=options_snapshot.get("scrolls") or None,
+                account_name=options_snapshot.get("account") or None,
+                start_date=options_snapshot.get("start_date"),
+                end_date=options_snapshot.get("end_date"),
+                post_type=options_snapshot.get("post_type"),
+                cancel_event=token.event if token else None,
+                progress_callback=_make_progress_callback(job_id, source_id),
+            )
+        else:
+            options = _build_scrape_options([source_url], options_snapshot)
+            result = scraper.scrape_source(
+                source_url,
+                options,
+                _make_progress_callback(job_id, source_id),
+                token.event if token else None,
+            )
     except Exception as exc:  # noqa: BLE001 - typed scraper errors map to codes
         if isinstance(exc, AppError):
             code, message = exc.code, exc.message

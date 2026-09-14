@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ApiErrorBanner } from "@/components/api-error-banner";
 import { ExportArea } from "@/components/export-area";
-import { Header } from "@/components/header";
 import { KpiCards } from "@/components/kpi-cards";
 import { PostDetailDrawer } from "@/components/post-detail-drawer";
 import { PostsTable } from "@/components/posts-table";
@@ -15,13 +15,30 @@ import type { Post, ScrapeRequest } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 1500;
 
-export default function HomePage() {
+export default function InvestigationPage() {
+  return (
+    <Suspense fallback={null}>
+      <InvestigationContent />
+    </Suspense>
+  );
+}
+
+function InvestigationContent() {
+  const searchParams = useSearchParams();
+  const urlParam = searchParams.get("url");
+  const urlJobParam = searchParams.get("job");
+
   const [jobId, setJobId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [startError, setStartError] = useState<ApiError | null>(null);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const lastRequestRef = useRef<ScrapeRequest | null>(null);
   const resultsRef = useRef<HTMLDivElement | null>(null);
+
+  // History deep links /?job=... → /investigation?job=... reopen a past run.
+  useEffect(() => {
+    setJobId(urlJobParam);
+  }, [urlJobParam]);
 
   const { job, error: pollError, retry: retryPoll } = useJobProgress(jobId, { pollMs: POLL_INTERVAL_MS });
   const postsState = useJobPosts(job && isTerminalStatus(job.status) ? jobId : null);
@@ -66,33 +83,43 @@ export default function HomePage() {
   }, [handleStart]);
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <Header />
+    <>
+      <div className="mx-auto w-full max-w-5xl px-8 pb-20 animate-fade-in-up">
+        <h1 className="mb-8 pt-6 font-sans text-4xl font-semibold tracking-tighter text-black">Target, configure, run.</h1>
 
-      <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-4 pb-16 pt-6 sm:px-6 lg:pt-8">
-        <UrlInputCard disabled={jobActive} submitting={submitting} onSubmit={handleStart} />
+        <UrlInputCard
+          initialUrls={urlParam ?? undefined}
+          disabled={jobActive}
+          submitting={submitting}
+          onSubmit={handleStart}
+          onClearError={() => setStartError(null)}
+        />
 
         {startError ? (
-          <ApiErrorBanner
-            title="Could not start the job"
-            message={startError.message}
-            onRetry={retryStart}
-            retryLabel="Try again"
-          />
+          <div className="mt-6">
+            <ApiErrorBanner
+              title="Could not start the job"
+              message={startError.message}
+              onRetry={retryStart}
+              retryLabel="Try again"
+            />
+          </div>
         ) : null}
 
         {jobId && !jobTerminal ? (
-          <ProgressSection active={jobActive} job={job} error={pollError} onRetry={retryPoll} />
+          <div className="mt-10 border-t border-neutral-200 pt-8">
+            <ProgressSection active={jobActive} job={job} error={pollError} onRetry={retryPoll} />
+          </div>
         ) : null}
 
         {jobTerminal ? (
-          <div ref={resultsRef} className="scroll-mt-24 space-y-6" aria-live="polite">
+          <div ref={resultsRef} className="mt-10 scroll-mt-24 space-y-6 border-t border-neutral-200 pt-8" aria-live="polite">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-xl font-semibold tracking-tight">
+              <h2 className="font-medium tracking-tight text-2xl text-foreground">
                 {job?.status === "failed" ? "Results (partial)" : "Results"}
               </h2>
-              <p className="max-w-lg truncate text-xs text-muted-foreground">
-                Job <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{jobId}</code>
+              <p className="max-w-lg truncate font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                Job <code className="border border-border px-1.5 py-0.5">{jobId}</code>
                 {job?.pages_total != null ? ` · ${job.pages_total} page${job.pages_total === 1 ? "" : "s"}` : ""}
               </p>
             </div>
@@ -119,16 +146,9 @@ export default function HomePage() {
             <ExportArea jobId={jobId} status={job?.status ?? null} onNewScrape={handleReset} />
           </div>
         ) : null}
-      </main>
-
-      <footer className="border-t bg-muted/30">
-        <div className="mx-auto w-full max-w-7xl px-4 py-4 text-center text-xs text-muted-foreground sm:px-6">
-          Facebook Posts Scraper — for authorized use only. Processes publicly available content with rate limiting and
-          no authentication bypass. Facebook content is untrusted input and is always rendered as plain text.
-        </div>
-      </footer>
+      </div>
 
       <PostDetailDrawer post={selectedPost} open={selectedPost !== null} onClose={() => setSelectedPost(null)} />
-    </div>
+    </>
   );
 }

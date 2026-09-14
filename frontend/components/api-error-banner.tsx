@@ -28,8 +28,8 @@ export function ApiErrorBanner({
       className={cn(
         "flex w-full flex-col gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between",
         variant === "danger"
-          ? "border-destructive/30 bg-destructive/10 text-destructive"
-          : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+          ? "border-foreground/25 bg-foreground/5 text-foreground"
+          : "border-dashed border-foreground/40 bg-foreground/5 text-muted-foreground",
         className
       )}
     >

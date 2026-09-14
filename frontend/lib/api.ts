@@ -6,8 +6,10 @@
  * text (we never use dangerouslySetInnerHTML anywhere in this app).
  */
 import type {
+  AccountsResponse,
   ApiErrorBody,
   ExportFormat,
+  JobListResponse,
   JobProgress,
   JobStatus,
   PaginatedPosts,
@@ -82,10 +84,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 /** Normalize a raw job payload (backend may omit nullable fields). */
 function normalizeJob(raw: Partial<JobProgress>): JobProgress {
-  const status = raw?.status ?? "queued";
+  const rawStatus: string = raw?.status ?? "queued";
+  const known =
+    TERMINAL_STATUSES.has(rawStatus) ||
+    rawStatus === "running" ||
+    rawStatus === "queued" ||
+    rawStatus === "paused";
   return {
     job_id: raw?.job_id ?? null,
-    status: TERMINAL_STATUSES.has(status) || status === "running" || status === "queued" || status === "paused" ? status : "queued",
+    status: known ? (rawStatus as JobProgress["status"]) : "queued",
     pages_total: raw?.pages_total ?? null,
     pages_completed: raw?.pages_completed ?? null,
     posts_found: raw?.posts_found ?? null,
@@ -185,6 +192,25 @@ export const api = {
   /** Absolute URL for the live export endpoints (JSON/CSV/XLSX). */
   getExportUrl(jobId: string, format: ExportFormat): string {
     return `${API_BASE}/api/jobs/${encodeURIComponent(jobId)}/export/${format}`;
+  },
+
+  /** GET /api/jobs — paginated history, newest first. */
+  async listJobs(params: { page?: number; page_size?: number } = {}): Promise<JobListResponse> {
+    const query = new URLSearchParams();
+    if (params.page != null) query.set("page", String(params.page));
+    if (params.page_size != null) query.set("page_size", String(params.page_size));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request<JobListResponse>(`/api/jobs${suffix}`);
+  },
+
+  /** GET /api/accounts — saved sessions (metadata only, no cookie contents). */
+  async listAccounts(): Promise<AccountsResponse> {
+    return request<AccountsResponse>("/api/accounts");
+  },
+
+  /** DELETE /api/accounts/{name} — remove a saved session. */
+  async deleteAccount(name: string): Promise<void> {
+    return request<void>(`/api/accounts/${encodeURIComponent(name)}`, { method: "DELETE" });
   },
 };
 

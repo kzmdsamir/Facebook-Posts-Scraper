@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from backend.api import exports, health, jobs, scrape
+from backend.api import accounts, exports, health, jobs, scrape
 from backend.core.config import get_settings
 from backend.core.database import init_db
 from backend.core.exceptions import AppError
@@ -73,6 +73,7 @@ def create_app() -> FastAPI:
 
     app.include_router(scrape.router, prefix=settings.api_prefix)
     app.include_router(jobs.router, prefix=settings.api_prefix)
+    app.include_router(accounts.router, prefix=settings.api_prefix)
     app.include_router(exports.router, prefix=settings.api_prefix)
     app.include_router(health.router, prefix=settings.api_prefix)
 

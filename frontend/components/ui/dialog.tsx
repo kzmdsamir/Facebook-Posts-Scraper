@@ -52,13 +52,13 @@ export function Dialog({ open, onClose, title, description, children, footer, si
       aria-label={title ?? "Dialog"}
     >
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-fade-in"
+        className="absolute inset-0 bg-black/50 animate-fade-in"
         onClick={onClose}
         aria-hidden="true"
       />
       <div
         className={cn(
-          "relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-2xl border bg-popover text-popover-foreground shadow-2xl animate-dialog-in sm:rounded-xl",
+          "relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-lg border bg-popover text-popover-foreground animate-dialog-in sm:rounded-lg",
           sizeClasses[size],
           className
         )}

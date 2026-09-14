@@ -19,26 +19,23 @@ function readStoredTheme(): Theme | null {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (stored === "light" || stored === "dark") return stored;
   } catch {
-    // localStorage unavailable (private mode) — fall through to system preference.
+    // localStorage unavailable (private mode) — fall through to the default.
   }
   return null;
-}
-
-function systemTheme(): Theme {
-  if (typeof window === "undefined") return "light";
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 /**
  * Class-strategy theme provider: toggles `dark` on <html> and persists the
  * choice to localStorage. Colors are plain CSS variables (see globals.css).
+ * Light-first: the white "mail" canvas is the default, with the black sidebar
+ * rail always drawn dark underneath it; dark is an opt-in terminal look.
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("light");
 
-  // Apply the stored/system theme right after hydration (before first paint in practice).
+  // Apply the stored choice right after hydration (light/mail bg by default).
   useEffect(() => {
-    setThemeState(readStoredTheme() ?? systemTheme());
+    setThemeState(readStoredTheme() ?? "light");
   }, []);
 
   useEffect(() => {
