@@ -59,12 +59,21 @@ def normalize_post_url(url: str | None) -> str | None:
 def make_fingerprint(post: Dict[str, object]) -> str:
     """SHA-256 fingerprint for posts without a ``post_id``.
 
-    Fingerprint = sha256 of ``page_id | published_at | text[:200]``.
+    Fingerprint = sha256 of ``page_id | timestamp_second | text[:200]``.
+
+    The timestamp is reduced to second precision (epoch integer, falling
+    back to the ISO string truncated at seconds) so two DOM snapshots of the
+    same post — whose relative-time parse differs only by microseconds —
+    hash identically and dedup correctly.
     """
     page_id = _stringify(post.get("page_id"))
-    published_at = _stringify(post.get("published_at"))
+    timestamp = post.get("timestamp")
+    if timestamp is not None:
+        ts = str(int(timestamp))
+    else:
+        ts = _stringify(post.get("published_at"))[:19]
     text = _stringify(post.get("text"))[:_TEXT_FINGERPRINT_LEN]
-    payload = f"{page_id}|{published_at}|{text}"
+    payload = f"{page_id}|{ts}|{text}"
     return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()
 
 
