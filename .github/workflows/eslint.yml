@@ -2,12 +2,12 @@ name: eslint
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, testing]
     paths:
       - "frontend/**"
       - ".github/workflows/eslint.yml"
   pull_request:
-    branches: [main, master]
+    branches: [main, master, testing]
     paths:
       - "frontend/**"
       - ".github/workflows/eslint.yml"
