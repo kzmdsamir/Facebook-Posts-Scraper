@@ -9,23 +9,24 @@
 #
 # Notes
 # -----
-# * The frontend target produces a Next.js 14 **standalone** server
+# * The frontend target produces a Next.js **standalone** server
 #   (`output: "standalone"` is already set in frontend/next.config.mjs), so the
 #   runtime image is tiny and contains no source tree or node_modules beyond
 #   the minimised production bundle Next emits.
 # * NEXT_PUBLIC_* variables are inlined by Next.js at BUILD time — changing
 #   the API URL requires a rebuild (see README "Configuration").
-# * The backend runs as a non-root user (uid 10001). On Linux hosts, make the
-#   bind-mounted `./data` directory writable by that uid (see README).
+# * Both runtime images run as a non-root user (backend uid 10001, node uid
+#   1000). `docker compose` mounts a **named volume** at /app/data so the
+#   container can always write, regardless of host uid.
 #
 # Build order in docker-compose:
 #   backend  -> target `backend`  (python:3.13-slim, FastAPI on :8000)
-#   frontend -> target `frontend` (node:20-alpine, Next.js on :3000)
+#   frontend -> target `frontend` (node:22-alpine, Next.js on :3000)
 
 # =====================================================================
 # STAGE: frontend-build — compile the Next.js app (build-time only)
 # =====================================================================
-FROM node:20-alpine AS frontend-build
+FROM node:22-alpine AS frontend-build
 WORKDIR /app
 
 # NEXT_PUBLIC_API_URL is inlined by Next.js at build time.
@@ -34,29 +35,30 @@ ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# No package-lock.json is committed yet, so use `npm install`
-# (`npm ci` requires a lockfile — regenerate one with `npm install` locally
-# and commit it to make builds reproducible).
-#
-# Sources are copied path-by-path (no .dockerignore is shipped yet, so an
-# unqualified `COPY frontend/ ./` could sweep in local node_modules / .env).
-# If you add new top-level folders under frontend/, list them here — or add
-# a .dockerignore and switch back to `COPY frontend/ ./`.
-COPY frontend/package.json frontend/tsconfig.json frontend/next-env.d.ts \
+# `npm ci` gives reproducible, lockfile-exact installs (package-lock.json is
+# committed). Sources are copied path-by-path so local node_modules / .env /
+# .next are never swept in (see .dockerignore at the repo root).
+COPY frontend/package.json frontend/package-lock.json \
+     frontend/tsconfig.json frontend/next-env.d.ts \
      frontend/next.config.mjs frontend/postcss.config.mjs \
-     frontend/tailwind.config.ts frontend/.eslintrc.json ./
-RUN npm install
+     frontend/tailwind.config.ts frontend/eslint.config.mjs ./
+RUN npm ci
 
 COPY frontend/app ./app
 COPY frontend/components ./components
 COPY frontend/lib ./lib
 COPY frontend/public ./public
+# vitest-setup.ts intentionally lands in the build stage: tsconfig's `include`
+# sweeps **/*.ts, and without its @testing-library/jest-dom/vitest import the
+# jest-dom matcher types used by __tests__/* fail `next build`'s type check.
+# (It is not copied into the runtime stage.)
+COPY frontend/vitest-setup.ts ./
 RUN npm run build
 
 # =====================================================================
-# STAGE: frontend — self-contained standalone runtime (Node 20)
+# STAGE: frontend — self-contained standalone runtime (Node 22)
 # =====================================================================
-FROM node:20-alpine AS frontend
+FROM node:22-alpine AS frontend
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -96,19 +98,20 @@ COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install -r backend/requirements.txt
 
 # Ship the application package (uvicorn imports `backend.main:app` from /app).
-# Copied path-by-path for the same no-.dockerignore reason as the frontend
-# (avoids local __pycache__ / .pyc / stray files). Add new backend subpackages
-# here, or ship a .dockerignore and use `COPY backend/ ./backend/`.
-COPY --chown=appuser:appuser backend/__init__.py backend/main.py ./backend/
-COPY --chown=appuser:appuser backend/api backend/core backend/models \
-     backend/schemas backend/services ./backend/
-COPY --chown=appuser:appuser backend/scraper backend/exporters ./backend/
+# Copy the whole tree in one shot: multi-source `COPY a b c ./dest/` FLATTENS
+# each directory's contents into ./dest (no api/… subdirs), which breaks
+# `backend.*` imports. A single `COPY backend/ ./backend/` preserves the
+# package layout. .dockerignore strips __pycache__/.pytest_cache/.venv extras.
+COPY --chown=appuser:appuser backend/ ./backend/
 
 # Runtime data directory. `Settings.ensure_dirs()` also creates it on
 # startup, but we pre-create + pre-chown it so the non-root user can write
-# even when the volume is mounted as root-owned on Linux hosts.
+# into a fresh (root-owned first-use) named volume.
 RUN mkdir -p /app/data && chown appuser:appuser /app/data
 
+# Job state lives in in-process worker threads, so this must stay a SINGLE
+# process — never scale with `--workers > 1` or multiple replicas behind the
+# same database, or in-flight job tracking will diverge per replica.
 USER appuser
 EXPOSE 8000
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

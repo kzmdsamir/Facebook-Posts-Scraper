@@ -1,0 +1,51 @@
+# ============================================================================
+# Facebook Posts Scraper — .dockerignore
+# Keeps the Docker build context lean and free of secrets/runtime artifacts.
+# Anything listed here is NOT sent to the Docker daemon.
+# ============================================================================
+
+# --- VCS / CI / editors -----------------------------------------------------
+.git
+.github
+.vscode
+.idea
+
+# --- Python ---------------------------------------------------------------
+.venv
+venv
+env
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+*.egg-info
+
+# --- Node / Next.js --------------------------------------------------------
+**/node_modules
+**/.next
+**/out
+**/*.tsbuildinfo
+frontend/.lighthouseci
+
+# --- Runtime data & exports (created by the app; never image content) ------
+data
+exports
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+fb_cookies*.json
+browser_dump.html
+
+# --- Secrets -----------------------------------------------------------------
+.env
+.env.*
+*.pem
+
+# --- Logs / runtime artifacts ----------------------------------------------
+nohup.out
+*.log
+logs

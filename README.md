@@ -100,6 +100,19 @@ docker compose up --build
 | http://localhost:8000/docs | Swagger UI |
 | http://localhost:8000/api/health | Health check |
 
+> **Docker notes**
+> - Both containers run as a non-root user against a **read-only root filesystem**
+>   with all capabilities dropped and resource limits set. The SQLite DB and
+>   exports live in the compose **named volume `data`** (`docker compose
+>   down -v` would delete it — don't run that with real data).
+> - The scraper keeps job state in in-process worker threads, so the backend
+>   must run as a **single replica** behind your reverse proxy.
+> - `NEXT_PUBLIC_API_URL` is baked into the frontend JS at build time; override
+>   it via `.env`, then rebuild (`docker compose up --build`) when you expose
+>   the API on a real host.
+> - On Linux, add your user to the `docker` group (`sudo usermod -aG docker $USER`)
+>   and re-login so `docker compose` works without `sudo`.
+
 ### Path C — Backend only
 
 ```bash

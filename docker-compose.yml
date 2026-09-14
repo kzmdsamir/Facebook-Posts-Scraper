@@ -5,9 +5,21 @@
 # targets. An optional PostgreSQL service is provided commented out below.
 #
 # Quick start:
-#   docker compose up --build
+#   docker compose up --build -d
 #   -> dashboard http://localhost:3000   API http://localhost:8000/api
 #      Swagger UI http://localhost:8000/docs
+#
+# Production notes:
+#   * Everything runs as a non-root user with hardened defaults
+#     (read-only root FS, all caps dropped, no new privileges, resource caps).
+#   * Runtime data (SQLite DB + exports) lives in the *named* volume `data`,
+#     so the container can write regardless of host uid. `docker compose
+#     down` does NOT delete it; `docker compose down -v` would.
+#   * The backend keeps job state in in-process worker threads — it MUST run
+#     as a single replica behind your reverse proxy. Scale the proxy/web
+#     layer, not this API.
+#   * Put this behind a TLS reverse proxy (Caddy/Traefik/nginx) for real
+#     traffic; point NEXT_PUBLIC_API_URL at the public API host and rebuild.
 #
 # Env vars:
 #   Every value below has a working default, so the stack runs with no .env
@@ -24,20 +36,26 @@ services:
       target: backend
     image: fb-posts-scraper-backend:latest
     container_name: fb-posts-scraper-backend
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
     ports:
       - "8000:8000"
     environment:
-      # Storage: SQLite by default. Switch to Postgres by uncommenting the
-      # `db` service below and setting:
+      # Storage: SQLite in the named volume by default. Switch to Postgres by
+      # uncommenting the `db` service below and setting:
       #   DATABASE_URL: postgresql+psycopg://fb_scraper:change-me@db:5432/fb_scraper
-      DATABASE_URL: ${DATABASE_URL:-sqlite:///./data/facebook_scraper.db}
-      DATA_DIR: ${DATA_DIR:-./data}
-      EXPORT_BASE_DIR: ${EXPORT_BASE_DIR:-./data/exports}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/facebook_scraper.db}
+      DATA_DIR: ${DATA_DIR:-/app/data}
+      EXPORT_BASE_DIR: ${EXPORT_BASE_DIR:-/app/data/exports}
       WORKER_THREADS: ${WORKER_THREADS:-4}
       MAX_URLS_PER_JOB: ${MAX_URLS_PER_JOB:-100}
       CANCEL_WAIT_SECONDS: ${CANCEL_WAIT_SECONDS:-5.0}
       DEBUG: ${DEBUG:-false}
       # JSON array — the browser origins allowed to call the API directly.
+      # Add your real frontend domain when hosted:
+      #   CORS_ORIGINS='["https://app.yourdomain.com"]'
       CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}'
       # Scraper / compliance knobs (see COMPLIANCE.md). Raise
       # SCRAPER_DELAY_SECONDS to throttle harder; never lower it below 1.0 in
@@ -47,8 +65,8 @@ services:
       SCRAPER_MAX_RETRIES: ${SCRAPER_MAX_RETRIES:-3}
       SCRAPER_ROBOTS: ${SCRAPER_ROBOTS:-1}
     volumes:
-      # SQLite database + export files live on the host.
-      - ./data:/app/data
+      # SQLite database + export files live here (survives rebuilds).
+      - data:/app/data
     healthcheck:
       # python:3.13-slim has no curl/wget; urllib is guaranteed present.
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status == 200 else 1)"]
@@ -56,6 +74,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${BACKEND_MEM_LIMIT:-512m}
+    cpus: ${BACKEND_CPUS:-1.0}
+    stop_grace_period: 30s
     restart: unless-stopped
 
   frontend:
@@ -66,12 +91,16 @@ services:
       args:
         # Build-time only: Next.js inlines NEXT_PUBLIC_* into the JS bundle.
         # It must be reachable FROM THE BROWSER (http://localhost:8000 works
-        # for local use; use the host's public name when deployed). Do NOT
+        # for local use; use your public API host when deployed). Do NOT
         # use http://backend:8000 here unless you proxy it — browsers cannot
         # resolve the compose service name.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     image: fb-posts-scraper-frontend:latest
     container_name: fb-posts-scraper-frontend
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
     ports:
       - "3000:3000"
     environment:
@@ -86,6 +115,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${FRONTEND_MEM_LIMIT:-512m}
+    cpus: ${FRONTEND_CPUS:-1.0}
+    stop_grace_period: 30s
     restart: unless-stopped
 
   # ------------------------------------------------------------------
@@ -112,5 +148,6 @@ services:
   #     retries: 5
   #   restart: unless-stopped
 
-# volumes:
-#   pgdata:
+volumes:
+  data:
+  # pgdata:
