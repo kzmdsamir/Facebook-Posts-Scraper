@@ -51,11 +51,20 @@ def scrape_browser(
         browser_kwargs["max_posts"] = max_posts
     if account_name:
         browser_kwargs["account_name"] = account_name
-    html = fetch_with_browser(
+    html, stats = fetch_with_browser(
         normalized_url,
         **browser_kwargs,
     )
     print(f"({time.time() - t0:.1f}s, {len(html)} bytes)")
+
+    if stats.get("login_wall"):
+        from backend.scraper.browser_scraper import get_cookie_status
+        status = get_cookie_status(account_name)
+        if status == "EXPIRED":
+            acct = account_name or "default"
+            print(f"  ERROR: Account '{acct}' cookies expired. Run: python cli.py login --account {acct}")
+        else:
+            print("  WARNING: Login wall detected.")
 
     if not html:
         return SourceResult(url=url, errors=[{"url": url, "code": "fetch_failed", "message": "Browser returned empty HTML"}])

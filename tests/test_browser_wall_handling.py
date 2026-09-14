@@ -50,13 +50,12 @@ def _parsed_page(n_posts: int = 3) -> ParsedPage:
 
 def test_wall_first_attempt_retries_anonymous():
     seen = []
-    real_fetch = bs.fetch_with_browser
 
     def fake_fetch(*args, **kwargs):
         seen.append(kwargs.get("use_cookies"))
         if len(seen) == 1:
-            return _wall_html()
-        return _valid_html()
+            return _wall_html(), {"login_wall": True, "posts_found": 0}
+        return _valid_html(), {"login_wall": False, "posts_found": 3}
 
     with patch.object(bs, "fetch_with_browser", side_effect=fake_fetch), \
          patch.object(bs, "parse_browser_page", return_value=_parsed_page()):
@@ -72,7 +71,8 @@ def test_wall_first_attempt_retries_anonymous():
 
 
 def test_feed_missing_partial_surfaces_error():
-    with patch.object(bs, "fetch_with_browser", return_value=_feed_missing_html()), \
+    with patch.object(bs, "fetch_with_browser",
+                      return_value=(_feed_missing_html(), {"login_wall": False, "posts_found": 3})), \
          patch.object(bs, "parse_browser_page", return_value=_parsed_page()):
         result = bs.scrape_source_browser("https://www.facebook.com/test")
     codes = [e.get("code") for e in result.errors]
@@ -82,8 +82,26 @@ def test_feed_missing_partial_surfaces_error():
 
 
 def test_clean_feed_has_no_partial_error():
-    with patch.object(bs, "fetch_with_browser", return_value=_valid_html()), \
+    with patch.object(bs, "fetch_with_browser",
+                      return_value=(_valid_html(), {"login_wall": False, "posts_found": 3})), \
          patch.object(bs, "parse_browser_page", return_value=_parsed_page()):
         result = bs.scrape_source_browser("https://www.facebook.com/test")
     assert result.errors == []
     assert len(result.posts) == 3
+
+
+def test_cookie_status_valid():
+    xs = {"name": "xs", "expires": datetime.now(timezone.utc).timestamp() + 3600}
+    with patch.object(bs, "load_cookies", return_value=[xs]):
+        assert bs.get_cookie_status("default") == "VALID"
+
+
+def test_cookie_status_expired():
+    xs = {"name": "xs", "expires": datetime.now(timezone.utc).timestamp() - 3600}
+    with patch.object(bs, "load_cookies", return_value=[xs]):
+        assert bs.get_cookie_status("default") == "EXPIRED"
+
+
+def test_cookie_status_missing_account():
+    with patch.object(bs, "load_cookies", return_value=None):
+        assert bs.get_cookie_status("ghost") == "EXPIRED"

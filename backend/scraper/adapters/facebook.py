@@ -82,7 +82,7 @@ class FacebookBrowserTransport:
         from ..browser_scraper import fetch_with_browser
 
         evt = cancel_event or self._cancel_event
-        html = fetch_with_browser(
+        html, stats = fetch_with_browser(
             url,
             max_posts=self.max_posts,
             scroll_rounds=self.scroll_rounds,
@@ -92,7 +92,7 @@ class FacebookBrowserTransport:
         return FetchResult(
             html=html,
             final_url=url,
-            meta={"transport": "browser"},
+            meta={"transport": "browser", **stats},
         )
 
     def close(self) -> None:

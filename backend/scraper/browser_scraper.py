@@ -90,6 +90,28 @@ def list_accounts() -> list[str]:
     return list(load_credentials().keys())
 
 
+def get_cookie_status(account_name: str | None = None) -> str:
+    """Return ``"VALID"`` or ``"EXPIRED"`` for the given account's cookies.
+
+    Checks the ``xs`` (session) cookie expiry against the current time.
+    Returns ``"EXPIRED"`` when the cookie file is missing, unreadable,
+    or the ``xs`` cookie has expired.
+    """
+    import time as _time
+
+    cookies = load_cookies(account_name)
+    if not cookies:
+        return "EXPIRED"
+    now = _time.time()
+    xs = next((c for c in cookies if c.get("name") == "xs"), None)
+    if xs is None:
+        return "EXPIRED"
+    expires = xs.get("expires")
+    if expires is None or expires < now:
+        return "EXPIRED"
+    return "VALID"
+
+
 def load_cookies(account_name: str | None = None) -> Optional[list]:
     """Load saved cookies from disk, or None if not found.
 
@@ -194,9 +216,10 @@ def fetch_with_browser(
     use_cookies: bool = True,
     account_name: Optional[str] = None,
     progress_callback: Optional[Callable[..., None]] = None,
-) -> str:
+) -> tuple:
     """Load a Facebook page in a headless browser, scroll to load posts,
-    and return the full rendered HTML."""
+    and return ``(html, stats)`` where *stats* is a dict with at least
+    ``login_wall`` (bool) and ``posts_found`` (int)."""
     from playwright.sync_api import sync_playwright
 
     def _report(found: int) -> None:
@@ -207,6 +230,8 @@ def fetch_with_browser(
                 pass
 
     html_result = ""
+    login_wall_detected = False
+    posts_found_total = 0
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -274,6 +299,7 @@ def fetch_with_browser(
                 }
             """)
             if login_check.get("isLoginPage") or login_check.get("hasLoginForm"):
+                login_wall_detected = True
                 logger.warning("Browser: hit login wall at %s", login_check.get("url"))
                 if not load_cookies(account_name=account_name):
                     print("  WARNING: Hit Facebook login wall. Run 'python cli.py login' first.")
@@ -380,7 +406,14 @@ def fetch_with_browser(
                 # When the Comet feed is unreachable (login wall), the only
                 # posts come from the rendered DOM; keep scrolling longer
                 # instead of giving up after only 3 quiet rounds.
-                stale_limit = 3 if graphql_post_ids else 6
+                # When graphql is present but we're still below the target,
+                # be more patient — Facebook sometimes resumes after a pause.
+                current = len(dom_pool) + len(script_pool) + len(graphql_post_ids)
+                if graphql_post_ids:
+                    deficit = max(0, (max_posts or 9999) - current)
+                    stale_limit = max(3, min(deficit // 3, 12))
+                else:
+                    stale_limit = 6
                 if fresh_new == 0 and len(graphql_post_ids) == gql_before:
                     stale_rounds += 1
                     if stale_rounds >= stale_limit:
@@ -403,6 +436,10 @@ def fetch_with_browser(
                     )
                     _report(
                         len(dom_pool) + len(script_pool) + len(graphql_post_ids)
+                    )
+                    posts_found_total = max(
+                        posts_found_total,
+                        len(dom_pool) + len(script_pool) + len(graphql_post_ids),
                     )
 
                 if max_posts is not None and (
@@ -459,7 +496,10 @@ def fetch_with_browser(
         finally:
             browser.close()
 
-    return html_result
+    return html_result, {
+        "login_wall": login_wall_detected,
+        "posts_found": posts_found_total,
+    }
 
 
 def parse_browser_page(
@@ -640,22 +680,44 @@ def scrape_source_browser(
         )
 
     # Try up to 2 times — Facebook sometimes serves a login wall on first
-    # load.  Attempt 1 uses the saved session; if that walls, attempt 2
-    # retries with an anonymous context (FB sometimes leaks the full feed).
+    # load.  First attempt uses saved session cookies; if that walls,
+    # attempt 2 retries anonymous (some public pages render more content
+    # without a stale session).  After both attempts, surface the cookie
+    # expiry status clearly so the caller can prompt a re-login.
     html = ""
+    wall_hit = False
+    stats: Dict[str, object] = {}
+
     for attempt in range(2):
-        html = fetch_with_browser(
+        use_cookies = (attempt == 0) and account_name is not None
+        html, stats = fetch_with_browser(
             normalized_url,
             max_posts=max_posts,
             scroll_rounds=scroll_rounds if scroll_rounds is not None else MAX_SCROLL_ROUNDS,
             cancel_event=cancel_event,
             account_name=account_name,
-            use_cookies=(attempt == 0),
+            use_cookies=use_cookies,
             progress_callback=progress_callback,
         )
-        if html and not _is_wall(html):
-            break
-        logger.warning("Browser attempt %d: login wall detected, retrying...", attempt + 1)
+
+        wall_hit = stats.get("login_wall", False) or _is_wall(html)
+
+        if not wall_hit:
+            break  # success, don't overwrite with anon
+
+        if attempt == 0 and wall_hit:
+            logger.warning(
+                "Login wall with account %s, retrying anonymous...", account_name or "default"
+            )
+            # loop will retry without cookies
+
+    # Surface BUG-004 clearly: if we ended with a wall AND the saved
+    # cookies are expired, tell the operator exactly what to do.
+    if wall_hit and account_name and get_cookie_status(account_name) == "EXPIRED":
+        logger.error(
+            "Account %s cookies EXPIRED. Run: python cli.py login --account %s",
+            account_name, account_name,
+        )
 
     if not html:
         return SourceResult(
