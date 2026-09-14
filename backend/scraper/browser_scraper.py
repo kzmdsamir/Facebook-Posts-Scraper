@@ -679,17 +679,19 @@ def scrape_source_browser(
             errors=[{"url": url, "code": "invalid_url", "message": str(exc)}],
         )
 
-    # Try up to 2 times — Facebook sometimes serves a login wall on first
-    # load.  First attempt uses saved session cookies; if that walls,
-    # attempt 2 retries anonymous (some public pages render more content
-    # without a stale session).  After both attempts, surface the cookie
-    # expiry status clearly so the caller can prompt a re-login.
+    # Try up to 3 times — Facebook sometimes serves a login wall (or an
+    # empty/partial feed) on first load.  Attempts 1-2 use the saved session
+    # cookies (a fresh session usually unlocks the full Comet feed); attempt
+    # 3 falls back anonymous for pages that render without a session.  A
+    # short delay between attempts helps avoid tripping Facebook's rate
+    # throttle on repeated headless loads.  After all attempts, surface the
+    # cookie expiry status clearly so the caller can prompt a re-login.
     html = ""
     wall_hit = False
     stats: Dict[str, object] = {}
 
-    for attempt in range(2):
-        use_cookies = (attempt == 0) and account_name is not None
+    for attempt in range(3):
+        use_cookies = (attempt < 2) and account_name is not None
         html, stats = fetch_with_browser(
             normalized_url,
             max_posts=max_posts,
@@ -703,13 +705,14 @@ def scrape_source_browser(
         wall_hit = stats.get("login_wall", False) or _is_wall(html)
 
         if not wall_hit:
-            break  # success, don't overwrite with anon
+            break  # success, don't overwrite with a worse attempt
 
         if attempt == 0 and wall_hit:
-            logger.warning(
-                "Login wall with account %s, retrying anonymous...", account_name or "default"
-            )
-            # loop will retry without cookies
+            logger.warning("Login wall with account %s, retrying with cookies...", account_name or "default")
+        elif attempt == 1 and wall_hit:
+            logger.warning("Login wall with account %s, retrying anonymous...", account_name or "default")
+        if attempt < 2:
+            time.sleep(3)
 
     # Surface BUG-004 clearly: if we ended with a wall AND the saved
     # cookies are expired, tell the operator exactly what to do.

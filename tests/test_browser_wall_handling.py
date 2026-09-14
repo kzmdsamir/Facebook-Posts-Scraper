@@ -48,7 +48,7 @@ def _parsed_page(n_posts: int = 3) -> ParsedPage:
     )
 
 
-def test_wall_first_attempt_retries_anonymous():
+def test_wall_first_attempt_retries_cookie_then_succeeds():
     seen = []
 
     def fake_fetch(*args, **kwargs):
@@ -58,16 +58,36 @@ def test_wall_first_attempt_retries_anonymous():
         return _valid_html(), {"login_wall": False, "posts_found": 3}
 
     with patch.object(bs, "fetch_with_browser", side_effect=fake_fetch), \
-         patch.object(bs, "parse_browser_page", return_value=_parsed_page()):
+         patch.object(bs, "parse_browser_page", return_value=_parsed_page()), \
+         patch.object(bs, "time"):
         result = bs.scrape_source_browser(
             "https://www.facebook.com/test",
             max_posts=10,
             account_name="default",
         )
-    # attempt 1 uses cookies, attempt 2 drops them
-    assert seen == [True, False]
+    # attempt 1 and 2 both use cookies, then break on success
+    assert seen == [True, True]
     assert result.errors == []
     assert len(result.posts) == 3
+
+
+def test_two_cookie_attempts_then_anonymous():
+    seen = []
+
+    def fake_fetch(*args, **kwargs):
+        seen.append(kwargs.get("use_cookies"))
+        return _wall_html(), {"login_wall": True, "posts_found": 0}
+
+    with patch.object(bs, "fetch_with_browser", side_effect=fake_fetch), \
+         patch.object(bs, "parse_browser_page", return_value=_parsed_page()), \
+         patch.object(bs, "time"):
+        result = bs.scrape_source_browser(
+            "https://www.facebook.com/test",
+            max_posts=10,
+            account_name="default",
+        )
+    # two cookie attempts, then anonymous
+    assert seen == [True, True, False]
 
 
 def test_feed_missing_partial_surfaces_error():
