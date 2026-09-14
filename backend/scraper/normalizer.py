@@ -221,6 +221,14 @@ def normalize_post(
 
     published_at, timestamp = _to_iso_and_epoch(raw.get("published_at"))
 
+    # Upgrade type: if media was extracted but classify returned "text",
+    # keep the media and adjust the type accordingly.
+    if post_type == "text":
+        if video_url:
+            post_type = "video"
+        elif media_url or thumbnail_url:
+            post_type = "image"
+
     # total reactions: explicit public total, else sum of a rendered
     # breakdown (only when at least one per-reaction count exists)
     reactions = raw.get("reactions")
@@ -264,8 +272,8 @@ def normalize_post(
         "media_type": "video" if post_type == "video"
                       else ("image" if post_type == "image" else None),
         "thumbnail_url": thumbnail_url,
-        "media_url": media_url if post_type == "image" else None,
-        "video_url": video_url if post_type == "video" else None,
+        "media_url": media_url,
+        "video_url": video_url,
         "transcript": None,              # never public on HTML pages
         "transcript_language": None,     # never public on HTML pages
         "scraped_at": scraped_at_iso,

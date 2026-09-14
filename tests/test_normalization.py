@@ -69,6 +69,22 @@ def test_post_type_classification_text_image_video_link():
     assert link_via_text["external_links"] == ["https://news.example/x"]
 
 
+def test_media_kept_and_type_upgraded_when_classified_text():
+    # BUG-002: GraphQL can deliver media_url on a post the shallow classifier
+    # calls "text". The media must survive and the type must upgrade, not be
+    # dropped by a post_type gate.
+    post = _norm(text="shares a photo", media_url="https://t/img_full.jpg",
+                 thumbnail_url="https://t/img.jpg")
+    assert post["post_type"] == "image"
+    assert post["media_url"] == "https://t/img_full.jpg"
+    assert post["thumbnail_url"] == "https://t/img.jpg"
+
+    post = _norm(text="watch clip", video_url="https://v/v.mp4")
+    assert post["post_type"] == "video"
+    assert post["video_url"] == "https://v/v.mp4"
+    assert post["media_url"] is None
+
+
 def test_hashtags_mentions_external_links():
     post = _norm(
         text="Check #LaunchDay with @nasa and @spacex! Also #Space",

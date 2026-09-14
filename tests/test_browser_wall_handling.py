@@ -125,3 +125,45 @@ def test_cookie_status_expired():
 def test_cookie_status_missing_account():
     with patch.object(bs, "load_cookies", return_value=None):
         assert bs.get_cookie_status("ghost") == "EXPIRED"
+
+
+def test_dom_duplicate_of_graphql_post_is_dropped():
+    gql = ParsedPost(post_id="1836269811633835",
+                     text="Karim Adeyemi: I have a number of goals to reach")
+    dom_dup = ParsedPost(post_id=None,
+                         text="Fabrizio Romano Verified account 36m Shared with "
+                              "Public Karim Adeyemi: I have a number of goals to reach")
+
+    kept = bs._drop_dom_duplicates([gql, dom_dup], bs._clean_dom_text)
+    assert [p.post_id for p in kept] == ["1836269811633835"]
+    assert len(kept) == 1
+
+
+def test_unique_dom_post_kept_when_no_overlap():
+    gql = ParsedPost(post_id="1836269811633835",
+                     text="Karim Adeyemi: transfer update")
+    dom_own = ParsedPost(post_id=None, text="A completely unrelated social post")
+
+    kept = bs._drop_dom_duplicates([gql, dom_own], bs._clean_dom_text)
+    assert len(kept) == 2
+
+
+def test_cli_export_mkdir(tmp_path):
+    # BUG-005: export into a nested directory that doesn't exist yet
+    from cli import export_posts
+    deep = str(tmp_path / "a" / "b" / "out.json")
+    result = export_posts([{"post_id": "1"}], fmt="json", output=deep)
+    import json as _json
+    with open(result) as f:
+        data = _json.load(f)
+    assert data[0]["post_id"] == "1"
+
+
+def test_cli_reactions_key():
+    # BUG-001: verify the CLI reads "reactions", not the old "reactions_total"
+    from backend.scraper.normalizer import normalize_post
+    from backend.scraper.parser import ParsedPost
+    post = normalize_post(ParsedPost(text="hi", reactions=5),
+                          facebook_url="https://www.facebook.com/test")
+    assert post["reactions"] == 5
+    assert post.get("reactions_total") is None
