@@ -55,12 +55,14 @@ function InvestigationContent() {
   const [submitting, setSubmitting] = useState(false);
   const [startError, setStartError] = useState<ApiError | null>(null);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [formDismissed, setFormDismissed] = useState(false);
   const lastRequestRef = useRef<ScrapeRequest | null>(null);
   const resultsRef = useRef<HTMLDivElement | null>(null);
 
   // History deep links /?job=... → /investigation?job=... reopen a past run.
   useEffect(() => {
     setJobId(urlJobParam);
+    if (urlJobParam) setFormDismissed(true);
   }, [urlJobParam]);
 
   const { job, error: pollError, retry: retryPoll } = useJobProgress(jobId, { pollMs: POLL_INTERVAL_MS });
@@ -84,6 +86,7 @@ function InvestigationContent() {
       const response = await api.startScrape(request);
       setJobId(response.job_id);
       setSelectedPost(null);
+      setFormDismissed(true);
     } catch (error) {
       setStartError(
         error instanceof ApiError ? error : new ApiError({ code: "network_error", message: "Failed to start the job." })
@@ -145,13 +148,24 @@ function InvestigationContent() {
           )}
         </AnimatePresence>
 
-        <UrlInputCard
-          initialUrls={urlParam ?? undefined}
-          disabled={jobActive}
-          submitting={submitting}
-          onSubmit={handleStart}
-          onClearError={() => setStartError(null)}
-        />
+        <AnimatePresence initial={false}>
+          {!formDismissed ? (
+            <motion.div
+              key="url-input-card"
+              exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+              className="overflow-hidden"
+            >
+              <UrlInputCard
+                initialUrls={urlParam ?? undefined}
+                disabled={jobActive}
+                submitting={submitting}
+                onSubmit={handleStart}
+                onClearError={() => setStartError(null)}
+              />
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
 
         {startError ? (
           <div className="mt-6">
