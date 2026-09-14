@@ -862,6 +862,20 @@ def _graphql_story_to_post(story: dict, page_url: str) -> Optional[ParsedPost]:
                 hits.extend(_deep_counts(it, key_prefix))
         return hits
 
+    def _deep_total_comment_counts(obj: Any) -> List[int]:
+        """Collect ``{"comments": {"total_count": N}}`` nodes anywhere."""
+        hits = []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k == "comments" and isinstance(v, dict) \
+                        and isinstance(v.get("total_count"), (int, float)):
+                    hits.append(int(v["total_count"]))
+                hits.extend(_deep_total_comment_counts(v))
+        elif isinstance(obj, list):
+            for it in obj:
+                hits.extend(_deep_total_comment_counts(it))
+        return hits
+
     if reactions == 0:
         rc = _deep_counts(story, "reaction_count")
         if rc:
@@ -869,6 +883,12 @@ def _graphql_story_to_post(story: dict, page_url: str) -> Optional[ParsedPost]:
     if comments_count == 0:
         cc = _deep_counts(story, "comment_total_count") \
             or _deep_counts(story, "comment_widget_total_comment_count")
+
+        # Comet newer shape: the total lives on a ``comments`` renderer node as
+        # ``comments.total_count`` (no dedicated *_count key).  Collect every
+        # ``{"comments": {"total_count": N}}`` and take the largest.
+        if not cc:
+            cc = _deep_total_comment_counts(story)
         if cc:
             comments_count = cc[0]
     if shares == 0:
@@ -906,6 +926,63 @@ def _graphql_story_to_post(story: dict, page_url: str) -> Optional[ParsedPost]:
                 has_image = True
                 if not thumbnail_url:
                     thumbnail_url = uri2
+
+        # Comet newer shape: the shallow ``attachments[].media`` node only
+        # carries ``__typename`` + id; the real renderer (photo URI, video
+        # frames) is nested under ``attachments[].styles.attachment.media``.
+        renderer = att.get("styles")
+        if not uri and isinstance(renderer, dict):
+            nested = renderer.get("attachment")
+            if isinstance(nested, dict):
+                # Albums: styles.attachment.all_subattachments.nodes[].media
+                for sub in nested.get("all_subattachments", {}).get("nodes") or []:
+                    smedia = sub.get("media") if isinstance(sub, dict) else None
+                    if not isinstance(smedia, dict):
+                        continue
+                    simg = smedia.get("image") or smedia.get("target_image") \
+                        or smedia.get("photo_image") or smedia.get("viewer_image") or {}
+                    suri = (simg.get("uri") if isinstance(simg, dict) else None) \
+                        or smedia.get("uri") or smedia.get("first_frame_thumbnail")
+                    if isinstance(suri, dict):
+                        suri = suri.get("uri")
+                    if not suri:
+                        continue
+                    if "Video" in (smedia.get("__typename") or ""):
+                        has_video = True
+                        if not video_url:
+                            video_url = smedia.get("playable_url") or smedia.get("url")
+                        if not thumbnail_url:
+                            thumbnail_url = suri
+                    else:
+                        has_image = True
+                        if not thumbnail_url:
+                            thumbnail_url = suri
+                        if not media_url:
+                            media_url = suri
+                nmedia = nested.get("media")
+                if isinstance(nmedia, dict):
+                    ntyp = nmedia.get("__typename") or typename
+                    nimg = nmedia.get("image") or nmedia.get("target_image") \
+                        or nmedia.get("preferred_thumbnail") or nmedia.get("photo_image") \
+                        or nmedia.get("viewer_image") or {}
+                    if isinstance(nimg, dict) and not nimg.get("uri"):
+                        nimg = nimg.get("image") or {}
+                    nuri = (nimg.get("uri") if isinstance(nimg, dict) else None) \
+                        or nmedia.get("uri") or nmedia.get("first_frame_thumbnail")
+                    if isinstance(nuri, dict):
+                        nuri = nuri.get("uri")
+                    if nuri and "Video" in ntyp:
+                        has_video = True
+                        if not video_url:
+                            video_url = nmedia.get("playable_url") or nmedia.get("url")
+                        if not thumbnail_url:
+                            thumbnail_url = nuri
+                    elif nuri:
+                        has_image = True
+                        if not thumbnail_url:
+                            thumbnail_url = nuri
+                        if not media_url:
+                            media_url = nuri
 
     external_links = [
         l for l in re.findall(r"(https?://[^\s\"'<>]+)", text_val or "")
