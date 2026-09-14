@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
 import { ApiErrorBanner } from "@/components/api-error-banner";
 import { ExportArea } from "@/components/export-area";
 import { KpiCards } from "@/components/kpi-cards";
@@ -14,6 +15,28 @@ import { useJobPosts, useJobProgress } from "@/lib/hooks";
 import type { Post, ScrapeRequest } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 1500;
+
+const DOT_STEP_MS = 400;
+const DOT_MAX = 4;
+
+function ScraperRunningHeading() {
+  const [dots, setDots] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setDots((d) => (d >= DOT_MAX ? 0 : d + 1));
+    }, DOT_STEP_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <span className="font-mono tabular-nums">
+      Scraper Running
+      {".".repeat(dots)}
+      <span className="invisible aria-hidden" aria-hidden="true">{`${"=".repeat(DOT_MAX)}`}</span>
+    </span>
+  );
+}
 
 export default function InvestigationPage() {
   return (
@@ -85,7 +108,42 @@ function InvestigationContent() {
   return (
     <>
       <div className="mx-auto w-full max-w-5xl px-8 pb-20 animate-fade-in-up">
-        <h1 className="mb-8 pt-6 font-sans text-4xl font-semibold tracking-tighter text-black">Target, configure, run.</h1>
+        <AnimatePresence mode="wait" initial={false}>
+          {jobActive ? (
+            <motion.h1
+              key="running"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              className="mb-8 pt-6 font-sans text-4xl font-semibold tracking-tighter text-black"
+            >
+              <ScraperRunningHeading />
+            </motion.h1>
+          ) : jobTerminal ? (
+            <motion.h1
+              key="results"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              className="mb-8 pt-6 font-sans text-4xl font-semibold tracking-tighter text-black"
+            >
+              {job?.status === "failed" ? "Results (partial)" : "Results"}
+            </motion.h1>
+          ) : (
+            <motion.h1
+              key="idle"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              className="mb-8 pt-6 font-sans text-4xl font-semibold tracking-tighter text-black"
+            >
+              Target, configure, run.
+            </motion.h1>
+          )}
+        </AnimatePresence>
 
         <UrlInputCard
           initialUrls={urlParam ?? undefined}
@@ -114,15 +172,10 @@ function InvestigationContent() {
 
         {jobTerminal ? (
           <div ref={resultsRef} className="mt-10 scroll-mt-24 space-y-6 border-t border-neutral-200 pt-8" aria-live="polite">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="font-medium tracking-tight text-2xl text-foreground">
-                {job?.status === "failed" ? "Results (partial)" : "Results"}
-              </h2>
-              <p className="max-w-lg truncate font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                Job <code className="border border-border px-1.5 py-0.5">{jobId}</code>
-                {job?.pages_total != null ? ` · ${job.pages_total} page${job.pages_total === 1 ? "" : "s"}` : ""}
-              </p>
-            </div>
+            <p className="max-w-lg truncate font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              Job <code className="border border-border px-1.5 py-0.5">{jobId}</code>
+              {job?.pages_total != null ? ` · ${job.pages_total} page${job.pages_total === 1 ? "" : "s"}` : ""}
+            </p>
 
             <KpiCards
               posts={postsState.posts}
