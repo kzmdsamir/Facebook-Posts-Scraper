@@ -14,9 +14,17 @@ DOCKER := docker compose
 PROD_FLAGS := -f docker-compose.yml -f docker-compose.prod.yml
 PROD_DIR := docker
 
-PY := python
-PIP := python -m pip
-UVICORN := python -m uvicorn
+# Prefer the project venv (.venv) when present; fall back to system python.
+# Ubuntu 24.04+ ships PEP 668 (externally-managed) pythons that refuse
+# pip installs, so a venv is the reliable host path.
+VENV_BIN := .venv/bin
+ifneq ($(wildcard $(VENV_BIN)/python),)
+  PY := $(VENV_BIN)/python
+else
+  PY := python
+endif
+PIP := $(PY) -m pip
+UVICORN := $(PY) -m uvicorn
 
 .PHONY: help
 help: ## Show this help

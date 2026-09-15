@@ -3,14 +3,8 @@ name: lighthouse
 on:
   push:
     branches: [main, master, testing]
-    paths:
-      - "frontend/**"
-      - ".github/workflows/lighthouse.yml"
   pull_request:
     branches: [main, master, testing]
-    paths:
-      - "frontend/**"
-      - ".github/workflows/lighthouse.yml"
 
 jobs:
   lighthouse:

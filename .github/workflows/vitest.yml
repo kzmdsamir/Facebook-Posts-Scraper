@@ -3,14 +3,8 @@ name: vitest
 on:
   push:
     branches: [main, master, testing]
-    paths:
-      - "frontend/**"
-      - ".github/workflows/vitest.yml"
   pull_request:
     branches: [main, master, testing]
-    paths:
-      - "frontend/**"
-      - ".github/workflows/vitest.yml"
 
 jobs:
   test:
