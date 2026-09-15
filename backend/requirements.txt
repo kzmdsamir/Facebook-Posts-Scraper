@@ -1,4 +1,4 @@
-# Facebook Posts Scraper — backend dependencies (pinned)
+# PostHarvest — backend dependencies (pinned)
 #
 # Install with:  pip install -r requirements.txt
 #
@@ -20,7 +20,11 @@ beautifulsoup4==4.13.3
 lxml==5.3.1
 brotli==1.2.0
 
-# --- optional: PostgreSQL backend -------------------------------------------------
-# To use PostgreSQL instead of SQLite, install a driver and set DATABASE_URL,
-# e.g.  DATABASE_URL=postgresql+psycopg://user:pass@host:5432/fb_scraper
-# psycopg[binary]==3.2.9
+# --- optional: Playwright browser scraping -------------------------------------------------
+# Chromium is downloaded at image build time (Dockerfile backend stage); the
+# python driver alone cannot render pages without the browser binary.
+playwright==1.62.0
+
+# --- PostgreSQL driver (used by both dev and prod) ---------------------------------
+# DATABASE_URL is set by docker-compose to point at the postgres service.
+psycopg[binary]==3.2.9

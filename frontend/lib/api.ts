@@ -1,5 +1,5 @@
 /**
- * Typed API client for the Facebook Posts Scraper backend.
+ * Typed API client for the PostHarvest backend.
  *
  * All post text and URLs rendered in the UI must never be trusted: use
  * `safeHttpUrl()` before putting a URL into an href, and let React escape

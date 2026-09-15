@@ -3,7 +3,7 @@
 Every field can be overridden with an environment variable of the same name
 (case-insensitive). Examples:
 
-    DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/fb_scraper
+    DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/postharvest
     CORS_ORIGINS='["http://localhost:3000","http://127.0.0.1:3000"]'   # JSON list
     DEBUG=true
     WORKER_THREADS=8
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     )
 
     # --- application ----------------------------------------------------------
-    app_name: str = "Facebook Posts Scraper API"
+    app_name: str = "PostHarvest API"
     version: str = "1.0.0"
     debug: bool = False
     api_prefix: str = "/api"
@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # psycopg / psycopg[binary] package — see requirements.txt comments).
     # No code changes are needed: the engine is built from this value and
     # all models use portable SQLAlchemy types / JSON columns.
-    database_url: str = "sqlite:///./data/facebook_scraper.db"
+    database_url: str = "sqlite:///./data/postharvest.db"
     data_dir: str = "./data"
     export_base_dir: str = "./data/exports"
 

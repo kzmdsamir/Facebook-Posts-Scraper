@@ -1,4 +1,4 @@
-# COMPLIANCE — Facebook Posts Scraper
+# COMPLIANCE — PostHarvest
 
 **Permitted-use statement, engineering guardrails, and Meta/Facebook
 compliance limitations** (product spec deliverable §14).
@@ -14,7 +14,7 @@ accurate as of its writing date).
 
 ## 1. What this tool is
 
-The Facebook Posts Scraper extracts **posts that Facebook already publishes
+The PostHarvest extracts **posts that Facebook already publishes
 to the public internet** — content visible to any unauthenticated visitor on
 a page or profile URL. The extraction path is:
 
@@ -76,7 +76,7 @@ Read this list carefully — each item is a **hard line** in the implementation:
   JS-rendered pages, raw video URLs, transcripts, reaction breakdowns), the
   tool stores `null` — it does **not** guess, fill, or extrapolate.
 - **Storage is yours:** all data lives in your database
-  (`data/facebook_scraper.db` or your Postgres). The tool has no telemetry,
+  (`data/postharvest.db` or your Postgres). The tool has no telemetry,
   no phone-home, and sends nothing except the public-page `GET` requests
   required for scraping.
 - **Operator duty under GDPR/other privacy law:** if you export and
@@ -151,6 +151,6 @@ path described here is the only path that exists.
 
 ---
 
-*This document accompanies the Facebook Posts Scraper deliverable (§14 of the
+*This document accompanies the PostHarvest deliverable (§14 of the
 product specification). It is a good-faith statement of design and usage
 boundaries, not legal counsel.*

@@ -1,4 +1,4 @@
-"""Facebook Posts Scraper CLI.
+"""PostHarvest CLI.
 
 Usage:
     python cli.py scrape <url> [url ...] [--browser] [--max-posts N] [--scrolls N] [--export csv|json|xlsx] [--output FILE]
@@ -283,7 +283,7 @@ def main() -> None:
             pass
 
     parser = argparse.ArgumentParser(
-        description="Facebook Posts Scraper CLI",
+        description="PostHarvest CLI",
     )
     sub = parser.add_subparsers(dest="command")
 
