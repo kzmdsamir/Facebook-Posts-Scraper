@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "docker:enableMajor",
+    "regexManagers:dockerfileVersions"
+  ],
+  "labels": ["dependencies", "docker"],
+  "dependencyDashboard": true,
+  "dependencyDashboardApproval": false,
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 0,
+  "schedule": ["before 07:00 on monday"],
+  "timezone": "Asia/Dhaka",
+  "baseBranches": ["testing"],
+  "rebaseWhen": "behind-base-branch",
+
+  "packageRules": [
+    {
+      "description": "Dependabot owns pip + npm; Renovate owns containers + actions",
+      "matchManagers": ["pip_requirements", "npm"],
+      "enabled": false
+    }
+  ]
+}

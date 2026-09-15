@@ -1,0 +1,57 @@
+# Dependabot — dependency update automation
+# Owner: Python (backend/tests) + npm (frontend).
+# Docker image tags + GitHub Actions are handled by Renovate (renovate.json),
+# so the two bots never open duplicate PRs.
+#
+# All update PRs target the "testing" branch, matching the project's
+# branch flow (fix/bugs → enhance → testing → main). Nothing lands on main
+# except via a testing PR.
+version: 2
+updates:
+  # --- Python (backend) -----------------------------------------------------
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    target-branch: "testing"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(backend)"
+    labels:
+      - "dependencies"
+      - "python"
+
+  # --- Python (tests) -------------------------------------------------------
+  - package-ecosystem: "pip"
+    directory: "/tests"
+    target-branch: "testing"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:30"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(tests)"
+    labels:
+      - "dependencies"
+      - "python"
+
+  # --- npm (frontend) -------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    target-branch: "testing"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+    # The frontend ships a standalone build in Docker; bundle-breaking majors
+    # (Next.js, React) are reviewed manually rather than auto-batched.
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(frontend)"
+    labels:
+      - "dependencies"
+      - "javascript"
