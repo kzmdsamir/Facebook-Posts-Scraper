@@ -34,6 +34,34 @@ def test_fallback_fingerprint_dedup():
     assert kept[0] is base
 
 
+def test_fingerprint_ignores_microsecond_published_at_shift():
+    # Two DOM snapshots of the same post parse the relative time at slightly
+    # different moments, so published_at differs only by microseconds while
+    # the epoch timestamp is identical. They must dedup to one row.
+    a = dict(
+        canonical_post(
+            post_id=None,
+            text="Fabrizio Romano Verified account 11m shared post body",
+            published_at="2026-09-14T08:01:44.670973+00:00",
+        ),
+        timestamp=1789372904,
+        post_url=None,
+    )
+    b = dict(
+        canonical_post(
+            post_id=None,
+            text="Fabrizio Romano Verified account 11m shared post body",
+            published_at="2026-09-14T08:01:44.736527+00:00",
+        ),
+        timestamp=1789372904,
+        post_url=None,
+    )
+    kept, removed = dedup_posts([a, b])
+    assert removed == 1
+    assert len(kept) == 1
+    assert make_fingerprint(a) == make_fingerprint(b)
+
+
 def test_fingerprint_distinguishes_different_text():
     a = dict(canonical_post(post_id=None, text="body A"), timestamp=None, post_url=None)
     b = dict(canonical_post(post_id=None, text="body B"), timestamp=None, post_url=None)

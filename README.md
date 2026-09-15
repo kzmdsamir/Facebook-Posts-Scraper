@@ -1,27 +1,30 @@
-# Facebook Posts Scraper
+# PostHarvest
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
 
 A job-based web service that extracts publicly accessible posts from Facebook
-pages and profiles. It fetches public HTML over the public web with a single
-honest user agent, **respects `robots.txt`**, and **throttles every request**
-(2.5 s minimum by default).
+pages and profiles — an honest scraper that fetches public HTML over the public
+web with a **single, honest user agent**, **respects `robots.txt`**, and
+**throttles every request** (2.5 s minimum by default).
 
 Two extraction modes:
 
-- **HTTP mode (default):** Fast (~3s), no browser needed, gets 1-2 posts per page.
-- **Browser mode (`--browser`):** Uses Playwright headless Chromium to execute
-  JavaScript, scroll the page, and load more posts. Supports authenticated
-  scraping via saved cookies for full content access.
+- **HTTP mode (default)** — Fast (~3 s), no browser needed, gets 1–2 posts per
+  page directly from the initial HTML.
+- **Browser mode (`--browser`)** — Uses Playwright headless Chromium to
+  execute JavaScript, scroll the page, and load more posts. Supports
+  authenticated scraping via saved cookies for full content access.
 
-The system is a FastAPI backend with a background job manager, a Next.js
-dashboard, a standalone CLI, and JSON / CSV / XLSX / JSONL exports.
+The project is a **FastAPI backend** with a background job manager, an optional
+**Next.js dashboard**, a standalone **CLI**, and **JSON / CSV / XLSX / JSONL**
+exports.
 
-> **Compliance framing — read this first.** This tool exists to collect
-> data Facebook already publishes to the world. It deliberately **does not**
-> bypass authentication, consent screens, rate limits, or anti-bot
-> protections. Using it still binds you to Facebook/Meta's Terms of Service,
-> applicable laws, and the `robots.txt` / scraping policies of the sites you
-> target. See **[COMPLIANCE.md](./COMPLIANCE.md)** for the full permitted-use
-> statement.
+> **Compliance framing — read this first.** This tool exists to collect data
+> Facebook already publishes to the world. It deliberately **does not** bypass
+> authentication, consent screens, rate limits, or anti-bot protections. Using
+> it still binds you to Facebook/Meta's Terms of Service, applicable laws, and
+> the `robots.txt` / scraping policies of the sites you target. See
+> **[COMPLIANCE.md](./COMPLIANCE.md)** for the full permitted-use statement.
 
 ---
 
@@ -30,7 +33,6 @@ dashboard, a standalone CLI, and JSON / CSV / XLSX / JSONL exports.
 - [Features](#features)
 - [Quick start](#quick-start)
 - [CLI usage](#cli-usage)
-- [Architecture](#architecture)
 - [Tech stack](#tech-stack)
 - [Repository structure](#repository-structure)
 - [Configuration](#configuration)
@@ -40,26 +42,27 @@ dashboard, a standalone CLI, and JSON / CSV / XLSX / JSONL exports.
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
 - [Compliance summary](#compliance-summary)
+- [Documentation](#documentation)
 
 ---
 
 ## Features
 
 - Scrape multiple Facebook **page / profile URLs** per job
-- **Two modes:** fast HTTP scraping or full browser-based scraping with Playwright
-- **Authenticated browser scraping:** login once via CLI, cookies saved for
-  subsequent requests to bypass login walls and load more posts
-- Job-based async model with live progress (API + dashboard)
-- Background worker pool, per-source lifecycle, best-effort job cancellation
-- Normalized 33-key post schema — missing fields are `null`/`[]`, never fabricated
+- **Two extraction modes:** fast HTTP scraping, or full browser scraping with
+  Playwright + saved-cookie authentication
+- Job-based async model with **live progress** (API + dashboard) and
+  best-effort cancellation, plus **pause / resume**
+- Background worker pool with per-source lifecycles (`queued → running →
+  completed | failed | cancelled`)
+- **CrawlState checkpointing** — resume a paused or crashed job where it left off
+- Normalized **33-key post schema** — missing fields are `null`/`[]`, never
+  fabricated
 - Date-range, post-type (`text/image/video/link/all`) and `max_posts` filters
-- **Pause / resume** running jobs from the dashboard or API
-- Two-layer deduplication (post-id + SHA-256 fingerprint)
+- **Two-layer deduplication** (post-id + SHA-256 fingerprint)
 - **Configurable proxy support** for all HTTP requests
-- **Rate limiter** with token-bucket pacing and circuit breaker
-- **Retry manager** with exponential backoff on 429/5xx
-- **CrawlState checkpointing** for crash recovery and resume
-- Dashboard: URL entry, live progress, KPI cards, post table, detail drawer, exports
+- Built-in **rate limiter** (token bucket) and **retry manager** (circuit
+  breaker, exponential backoff on 429/5xx)
 - Exports: **JSON**, **CSV**, **XLSX**, **JSONL** (streaming)
 - SQLite out of the box; PostgreSQL via `DATABASE_URL`
 - Consistent error envelope `{"error": {"code", "message"}}` on every failure
@@ -67,30 +70,16 @@ dashboard, a standalone CLI, and JSON / CSV / XLSX / JSONL exports.
 
 ## Quick start
 
-### Path A — CLI (simplest)
+The fastest path is the **Docker stack** (one command, everything included).
+Prefer running pieces on the host? Paths B–D below.
+
+### Path A — Docker Compose (recommended)
+
+All container files live in `docker/` — compose's project directory. From the
+repo root, use the Makefile (or `cd docker` for the raw compose commands):
 
 ```bash
-cd facebook-posts-scraper
-python -m venv .venv
-# Windows: .venv\Scripts\activate   |   Unix: source .venv/bin/activate
-pip install -r backend/requirements.txt playwright
-playwright install chromium
-
-# HTTP mode (fast, 1-2 posts)
-python cli.py scrape https://www.facebook.com/<public-page> --export json
-
-# Browser mode (more posts, slower)
-python cli.py scrape https://www.facebook.com/<public-page> --browser --max-posts 20 --export xlsx
-
-# Authenticated browser mode (full content)
-python cli.py login                          # opens browser, log in, cookies saved
-python cli.py scrape <url> --browser         # uses saved cookies
-```
-
-### Path B — Docker Compose (full stack)
-
-```bash
-docker compose up --build
+make dev        # foreground: backend :8000 + frontend :3000 + postgres, hot reload
 ```
 
 | URL | What |
@@ -100,36 +89,70 @@ docker compose up --build
 | http://localhost:8000/docs | Swagger UI |
 | http://localhost:8000/api/health | Health check |
 
-### Path C — Backend only
+Production topology (nginx :80/:443 + read-only rootfs hardened layer):
 
 ```bash
+make prod-up    # or: cd docker && docker compose -f docker-compose.yml \
+                #          -f docker-compose.prod.yml --profile prod up -d --build
+```
+
+> **Docker notes**
+> - **Env split:** compose reads `docker/.env` (template `docker/example.env`);
+>   the root `.env.example` is only for the CLI / tests / host apps.
+> - **Dev** = writable rootfs + bind mounts + hot reload (auto-loaded override).
+>   **Prod** = `docker-compose.prod.yml` layer: read-only rootfs, dropped
+>   capabilities, mem/CPU caps. See DECISIONS.md D12.
+> - The backend bind-mounts `../data` — the **host CLI and container share one
+>   cookie/export store**, so `python cli.py login` sessions appear in the API
+>   immediately.
+> - The scraper keeps job state in in-process worker threads: the backend must
+>   run as a **single replica** behind any reverse proxy.
+> - `NEXT_PUBLIC_API_URL` is baked into the frontend JS at build time. Default
+>   is empty (= same-origin via nginx `/api/*`); override in `docker/.env`,
+>   then `make prod-build`.
+> - Linux: add your user to the `docker` group and re-login so `docker compose`
+>   works without `sudo` (`sudo usermod -aG docker $USER`).
+
+### Path B — CLI only (simplest)
+
+```bash
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r backend/requirements.txt
-uvicorn backend.main:app --reload --reload-dir backend --port 8000
+python -m playwright install chromium               # only for --browser mode
+
+# HTTP mode (fast, 1-2 posts)
+python cli.py scrape https://www.facebook.com/<public-page> --export json
+
+# Browser mode (more posts, slower)
+python cli.py scrape https://www.facebook.com/<public-page> --browser --max-posts 20 --export xlsx
+
+# Authenticated browser mode (full content)
+python cli.py login                          # opens browser, saves cookies
+python cli.py scrape <url> --browser         # uses saved cookies
 ```
 
-### Path D — Frontend only
-
-```bash
-cd frontend && npm install && npm run dev   # → http://localhost:3000
-```
-
-### Run both (recommended)
+### Path C — Backend + frontend on the host
 
 ```bash
 # Terminal 1 — backend
 uvicorn backend.main:app --reload --reload-dir backend --port 8000
 
-# Terminal 2 — frontend
-cd frontend && npm run dev
+# Terminal 2 — frontend (http://localhost:3000)
+cd frontend && npm install && npm run dev
 ```
 
-Then open **http://localhost:3000** in your browser.
+### Where do the files go?
+
+Runtime state (SQLite DB, exports, saved cookies) lands in `data/` at the repo
+root — in Docker this is bind-mounted to the backend, on the host it's the
+working directory's `data/`.
 
 ## CLI usage
 
 ```
 python cli.py login                          # Open browser to log into Facebook
 python cli.py scrape <url> [url ...] [options]
+python cli.py accounts                       # List saved Facebook sessions
 ```
 
 ### Scrape options
@@ -141,6 +164,8 @@ python cli.py scrape <url> [url ...] [options]
 | `--scrolls N` | 40 | Max scroll rounds in browser mode |
 | `--export csv\|json\|jsonl\|xlsx` | *(none)* | Export results to file |
 | `--output FILE` | auto | Output file path |
+| `--account name` | *(none)* | Session name to use; comma-separated for rotation |
+| `--accounts-all` | off | Auto-rotate across all saved sessions |
 
 ### Examples
 
@@ -155,54 +180,9 @@ python cli.py scrape https://www.facebook.com/ashraful.islam333 \
 # Scrape multiple pages
 python cli.py scrape https://www.facebook.com/page1 https://www.facebook.com/page2 \
     --browser --export json
-```
 
-## Architecture
-
-```
-┌─────────────────────────────────┐       ┌──────────────────────────────────┐
-│  CLI (cli.py)                   │       │  Next.js dashboard (:3000)        │
-│  --browser → Playwright         │       │  URL input / progress / KPIs      │
-│  -- (default) → HTTP (httpx)    │       │  posts table / pause / export     │
-└────────────┬────────────────────┘       └────────────┬─────────────────────┘
-             │ direct import                          │ HTTP (CORS)
-             └────────────┬───────────────────────────┘
-                          ▼
-         ┌─────────────────────────────────────┐
-         │      FastAPI backend (:8000)         │
-         │  POST /api/scrape → queues job       │
-         │  GET /api/jobs/{id} (live poll)      │
-         │  GET /api/jobs/{id}/posts            │
-         │  POST /api/jobs/{id}/pause           │
-         │  POST /api/jobs/{id}/resume          │
-         │  GET …/export/{json|csv|excel|jsonl} │
-         │  GET /api/health                     │
-         └────────────────┬────────────────────┘
-                          │ ThreadPoolExecutor (4 workers)
-         ┌────────────────▼────────────────────┐
-         │  Job manager (queued → running →     │
-         │  paused → completed | failed)        │
-         │  ┌──────────┐  ┌──────────────────┐  │
-         │  │ scraper   │  │ exporters        │  │
-         │  │ (httpx +  │  │ json/csv/xlsx/   │  │
-         │  │ robots +  │  │ jsonl            │  │
-         │  │ throttle +│  │ → data/exports   │  │
-         │  │ proxy +   │  └──────────────────┘  │
-         │  │ retry +   │                        │
-         │  │ rate)     │                        │
-         │  │ OR        │                        │
-         │  │ Playwright│                        │
-         │  │ (browser) │                        │
-         │  └──────────┘                         │
-         │  ┌──────────────────────────────────┐ │
-         │  │ CrawlState checkpointing          │ │
-         │  │ (resume on crash / restart)       │ │
-         │  └──────────────────────────────────┘ │
-         └────────────────┬────────────────────┘
-                          │
-         ┌────────────────▼────────────────────┐
-         │  SQLite (WAL) / PostgreSQL           │
-         └─────────────────────────────────────┘
+# Use two saved sessions for rotation (see `python cli.py login --account name`)
+python cli.py scrape https://www.facebook.com/page --browser --account acc1,acc2
 ```
 
 ## Tech stack
@@ -212,85 +192,95 @@ python cli.py scrape https://www.facebook.com/page1 https://www.facebook.com/pag
 | Backend | Python 3.11+ · FastAPI 0.115 · Uvicorn 0.34 · Pydantic v2 |
 | Data | SQLAlchemy 2.0 · SQLite WAL (default) / PostgreSQL (optional) |
 | Scraper (HTTP) | httpx · BeautifulSoup4 (lxml) · brotli · stdlib `urllib.robotparser` |
-| Scraper (Browser) | Playwright (Chromium headless) |
+| Scraper (Browser) | Playwright 1.62 (Chromium headless) |
 | Resilience | RateLimiter (token-bucket) · RetryManager (circuit breaker) · ProxyManager |
 | Exports | stdlib `json`/`csv` · openpyxl (XLSX) · streaming JSONL |
-| Frontend | Next.js 14 (App Router) · React 18 · TypeScript · Tailwind CSS 3.4 |
-| Ops | Docker (multi-stage), docker-compose |
+| Frontend | Next.js 16 (App Router) · React 18 · TypeScript · Tailwind CSS 3 |
+| Ops | Docker (multi-stage) · docker compose · Makefile |
 
 ## Repository structure
 
 ```
-facebook-posts-scraper/
-├── cli.py                     # Standalone CLI (login + scrape)
-├── Dockerfile                 # backend (:8000) + frontend (:3000)
-├── docker-compose.yml
-├── .env.example
-├── COMPLIANCE.md              # Permitted-use + Meta compliance
+postharvest/
+├── cli.py                     # Standalone CLI (login + scrape + accounts)
+├── Makefile                   # One command for everything (dev/prod/tests/CLI)
+├── docker/                    # ALL container stuff (compose project dir)
+│   ├── Dockerfile             # multi-target build (backend, backend-dev, frontend, …)
+│   ├── docker-compose.yml     # base topology (dev + prod share this)
+│   ├── docker-compose.override.yml  # dev only: hot reload + bind mounts
+│   ├── docker-compose.prod.yml      # prod hardening layer (read-only, caps)
+│   ├── example.env            # → cp to docker/.env
+│   └── nginx/                 # nginx.conf + default.conf
+├── deploy/                    # host-side ops: certbot, systemd, runbooks
+├── docs/                      # long-form guides (architecture, API, deploy, contributing)
+├── examples/                  # Shipped example exports (json, csv, xlsx)
+├── .env.example               # CLI / tests / local `next dev` env template
+├── DECISIONS.md               # Locked product & infra decisions (D1–D12)
+├── COMPLIANCE.md              # Permitted-use + Meta compliance statement
 ├── README.md
 │
 ├── backend/
+│   ├── requirements.txt       # Pinned deps (incl. brotli, playwright)
 │   ├── main.py                # FastAPI app factory, CORS, error handlers
-│   ├── requirements.txt       # Pinned deps (including brotli, playwright)
-│   ├── api/                   # scrape, jobs, exports, health routers
+│   ├── api/                   # scrape, jobs, exports, accounts, health routers
 │   ├── core/                  # config, database, exceptions, job_manager, logging
-│   ├── models/                # SQLAlchemy: jobs, sources, posts, media, errors, crawl_state
+│   ├── models/                # SQLAlchemy: jobs, sources, posts, engagement, media, errors, crawl_state
 │   ├── schemas/               # Pydantic request/response models
-│   ├── services/              # job_service, export_service, crawl_state_service, serialization
+│   ├── services/              # job_service, export_service, crawl_state_service, serialization, stats
 │   ├── scraper/
-│   │   ├── __init__.py        # scrape_source() orchestrator
-│   │   ├── fetcher.py         # HTTP fetcher (proxy + retry + delay)
-│   │   ├── http_client.py     # Shared httpx factory, BROWSER_HEADERS, retry_get()
-│   │   ├── rate_limiter.py    # Token-bucket RateLimiter, RetryManager (circuit breaker)
-│   │   ├── proxy_manager.py   # Proxy rotation, health checking, fallback
-│   │   ├── pagination.py      # Generic pagination engine
-│   │   ├── crawler.py         # Transport-agnostic Crawler class
+│   │   ├── __init__.py        # public contract: validate_facebook_url, scrape_source
+│   │   ├── fetcher.py         # compliance-first httpx fetcher (robots, throttle, retries)
+│   │   ├── http_client.py     # shared httpx factory, honest UA
+│   │   ├── rate_limiter.py    # token-bucket RateLimiter + RetryManager (circuit breaker)
+│   │   ├── proxy_manager.py   # optional proxy rotation + health checks
+│   │   ├── pagination.py      # generic pagination engine
+│   │   ├── crawler.py         # transport-agnostic orchestrator
 │   │   ├── adapters/          # Facebook HTTP + Browser transport adapters
-│   │   ├── parser.py          # Facebook HTML/JSON post parser
+│   │   ├── parser.py          # Facebook HTML/GraphQL post parser
 │   │   ├── normalizer.py      # 33-key post schema normalization
-│   │   ├── dedup.py           # Post-ID + SHA-256 dedup, cross-source dedup
-│   │   ├── browser_scraper.py # Playwright browser scraper
-│   │   ├── stats.py           # Scrape statistics counters
+│   │   ├── dedup.py           # post-id + SHA-256 dedup
+│   │   ├── browser_scraper.py # Playwright browser scraper + login walls
+│   │   ├── stats.py           # scrape statistics counters
+│   │   ├── errors.py          # ScraperError taxonomy
 │   │   └── url_validator.py   # Facebook URL validation + normalization
 │   └── exporters/
-│       ├── json.py            # Nested JSON export
-│       ├── csv_export.py      # Flat CSV export
-│       ├── xlsx_export.py     # Styled XLSX workbook
-│       ├── jsonl_exporter.py  # Streaming JSONL export
-│       ├── safety.py          # Filename allowlist, path safety
-│       └── __init__.py        # export_posts() dispatcher
+│       ├── __init__.py        # export_posts() dispatcher
+│       ├── json_exporter.py   # nested JSON export
+│       ├── csv_exporter.py    # flat CSV (UTF-8 BOM)
+│       ├── xlsx_exporter.py   # styled 4-sheet XLSX workbook
+│       ├── jsonl_exporter.py  # streaming JSONL
+│       └── safety.py          # filename allowlist, path-traversal guards
 │
-├── frontend/                  # Next.js 14 dashboard
-│   ├── app/                   # page.tsx, layout, globals
-│   ├── components/            # header, url-input, progress, KPI cards, posts table
-│   └── lib/                   # api.ts (pause/resume), hooks.ts, types.ts, utils.ts
+├── frontend/                  # Next.js 16 dashboard
+│   ├── app/                   # (app)/ routes, layout, sitemap, robots, OG images
+│   ├── components/            # sidebar, url-input, progress, KPI cards, posts table, …
+│   └── lib/                   # api.ts (typed client), hooks.ts, settings.ts, docs-meta.ts
 │
-├── data/                      # Runtime: SQLite DB + exports + fb_cookies.json
-├── examples/                  # Shipped example exports
-└── tests/                     # 105+ tests (mocked responses)
-    ├── test_api_endpoints.py
+├── data/                      # Runtime (gitignored): SQLite DB + exports + fb_cookies*.json
+└── tests/                     # 133 tests (hermetic mocks, no network)
+    ├── test_api_endpoints.py   # scrape, jobs, exports, accounts, health
+    ├── test_browser_wall_handling.py
     ├── test_dedup_stats.py
-    ├── test_export_api.py
-    ├── test_fetcher.py
-    ├── test_integration.py
+    ├── test_e2e_integration.py  # full pipeline + proxy wiring
+    ├── test_error_handling.py
+    ├── test_export_api.py / test_exporters.py
+    ├── test_graphql_extractor.py
+    ├── test_infrastructure.py   # RateLimiter, RetryManager, ProxyManager
     ├── test_job_state_machine.py
-    ├── test_parser_extractors.py
-    ├── test_post_processing.py
-    ├── test_scraper_api.py
-    ├── test_infrastructure.py  # RateLimiter, RetryManager, ProxyManager, dedup
-    ├── test_e2e_integration.py # Full pipeline integration tests
-    └── test_exporters.py
+    ├── test_normalization.py
+    └── test_url_validation.py
 ```
 
 ## Configuration
 
-All backend variables are read by pydantic-settings (env vars **or** `.env`).
+All backend variables are read by pydantic-settings — env vars **or** a `.env`
+file. In Docker, set them in `docker/.env`; on the host, in the root `.env`.
 
 ### General
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///./data/facebook_scraper.db` | SQLAlchemy DSN |
+| `DATABASE_URL` | `sqlite:///./data/postharvest.db` | SQLAlchemy DSN |
 | `DATA_DIR` | `./data` | Runtime data directory |
 | `EXPORT_BASE_DIR` | `./data/exports` | Export output root |
 | `WORKER_THREADS` | `4` | Parallel scrape workers |
@@ -298,14 +288,14 @@ All backend variables are read by pydantic-settings (env vars **or** `.env`).
 | `DEFAULT_MAX_POSTS` | *(none)* | Per-source post cap |
 | `DEFAULT_POST_TYPE` | `all` | Default type filter |
 | `DEBUG` | `false` | Verbose logging |
-| `CORS_ORIGINS` | `["http://localhost:3000","http://127.0.0.1:3000"]` | Allowed origins |
+| `CORS_ORIGINS` | `["http://localhost:3000","http://127.0.0.1:3000"]` | Allowed browser origins |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend URL (build-time for Next.js) |
 
-### Scraper
+### Scraper (compliance knobs)
 
 | Variable | Default | Description |
 |---|---|---|
-| `SCRAPER_DELAY_SECONDS` | `2.5` | Min delay between requests per source |
+| `SCRAPER_DELAY_SECONDS` | `2.5` | Min delay between requests per source (floor 0.1; do not lower in production) |
 | `SCRAPER_TIMEOUT_SECONDS` | `20` | Per-request timeout |
 | `SCRAPER_MAX_RETRIES` | `3` | Retries with exponential backoff |
 | `SCRAPER_ROBOTS` | `1` | Enforce robots.txt |
@@ -319,7 +309,11 @@ All backend variables are read by pydantic-settings (env vars **or** `.env`).
 
 ## API reference
 
-Base URL: `http://localhost:8000/api`. Docs: http://localhost:8000/docs
+> **Full reference** — every endpoint, payload, the normalized 33-key post
+> schema, error contract and pagination rules — lives in
+> **[docs/API.md](./docs/API.md)**. Interactive docs: http://localhost:8000/docs
+
+Quick orientation — base URL `http://localhost:8000/api`:
 
 **Error envelope:** `{"error": {"code": "<code>", "message": "<human>"}}`
 
@@ -327,51 +321,22 @@ Base URL: `http://localhost:8000/api`. Docs: http://localhost:8000/docs
 |---|---|---|
 | 400 | `invalid_input`, `validation_error` | Bad request |
 | 404 | `not_found` | Unknown job |
-| 409 | `job_running`, `conflict` | Job not finished |
+| 409 | `job_running`, `invalid_state`, `conflict` | Illegal state / job busy |
 | 500 | `internal_error` | Unhandled error |
-| 503 | `scraper_unavailable`, `database_unavailable` | Dependency down |
+| 503 | `service_unavailable`, `database_unavailable` | Dependency down |
 
-### `POST /api/scrape` — start a job
-
-```json
-{
-  "urls": ["https://www.facebook.com/greencitydhaka"],
-  "max_posts": 200,
-  "start_date": "2026-01-01",
-  "end_date": "2026-08-01",
-  "post_type": "all"
-}
-```
-
-Response `201`: `{ "job_id": "a1b2c3d4…", "status": "queued" }`
-
-### `GET /api/jobs/{job_id}` — status & progress
-
-Poll until `status` is `completed`, `failed`, or `paused`. Returns `pages_total`,
-`pages_completed`, `posts_found`, `posts_processed`, `duplicates`, `errors`,
-`error_details`, `posts_skipped`, `posts_failed`.
-
-### `GET /api/jobs/{job_id}/posts` — paginated posts
-
-`?page=1&page_size=200`. Returns normalized 33-key post objects.
-
-### `POST /api/jobs/{job_id}/pause` — pause a running job
-
-Response `200`: `{ "status": "paused" }`
-
-### `POST /api/jobs/{job_id}/resume` — resume a paused job
-
-Response `200`: `{ "status": "queued" }`
-
-### `GET /api/jobs/{job_id}/export/{json|csv|excel|jsonl}` — download results
-
-### `DELETE /api/jobs/{job_id}` — cancel & delete
-
-### `GET /api/health` — liveness probe
-
-```json
-{ "status": "ok", "database": "ok", "version": "1.0.0" }
-```
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/scrape` | Start a job (201 → `job_id`, `status: queued`) |
+| `GET` | `/api/jobs` | List recent jobs (paginated) |
+| `GET` | `/api/jobs/{id}` | Job status + live progress |
+| `GET` | `/api/jobs/{id}/posts` | Paginated posts (`?page=&page_size=`) |
+| `GET` | `/api/jobs/{id}/stats` | Aggregated dashboard KPIs |
+| `POST` | `/api/jobs/{id}/pause` · `/resume` | Pause / resume a running job |
+| `DELETE` | `/api/jobs/{id}` | Best-effort cancel + delete |
+| `GET` | `/api/jobs/{id}/export/{json\|csv\|excel}` | Download export file |
+| `GET` | `/api/accounts` · `DELETE` `/api/accounts/{name}` | Manage saved FB sessions |
+| `GET` | `/api/health` | Liveness probe (`{"status":"ok"}`) |
 
 ## Exports
 
@@ -385,18 +350,15 @@ Response `200`: `{ "status": "queued" }`
 ## Testing
 
 ```bash
-pip install pytest
-pytest -q --ignore=tests/test_exporters.py
+make test            # backend: python -m pytest tests/ -v --tb=short (133 tests)
+make test-frontend   # frontend: vitest
+make test-all        # both
 ```
 
-Tests use mocked scraper responses — no live network access.
-
-**105+ tests** covering:
-- API endpoints (scrape, jobs, exports, health)
-- Scraper pipeline (fetcher, parser, normalizer, dedup)
-- Job state machine (lifecycle, cancel, pause/resume)
-- Infrastructure (RateLimiter, RetryManager, ProxyManager)
-- End-to-end integration (full pipeline, proxy wiring)
+Tests use **hermetic mocked scraper responses — no live network access**. The
+suite covers API endpoints, the scraper pipeline (fetcher/parser/normalizer/
+dedup/browser wall-handling), job state machine (cancel/pause/resume), exports,
+infrastructure (RateLimiter/RetryManager/ProxyManager), and end-to-end flow.
 
 ## Troubleshooting
 
@@ -404,47 +366,58 @@ Tests use mocked scraper responses — no live network access.
 |---|---|
 | "API unreachable" banner | Backend not running; rebuild frontend if `NEXT_PUBLIC_API_URL` changed |
 | CORS error | `CORS_ORIGINS` doesn't include your frontend origin |
-| 0 posts, no errors | Modern Facebook `www` is JS-rendered; try `--browser` mode or check login wall |
+| 0 posts, no errors | Modern Facebook `www` is JS-rendered; try `--browser` or check the login wall |
 | `auth_required` in errors | Page requires login; run `python cli.py login` then use `--browser` |
 | `rate_limited` | Too many requests; raise `SCRAPER_DELAY_SECONDS` |
-| `scraper_unavailable` | Backend scraper module incomplete |
-| SQLite `database is locked` | Reduce `WORKER_THREADS` or use PostgreSQL |
-| Browser login not detected | Cookies expired; run `python cli.py login` again |
-| Proxy not working | Check `PROXY_URL` in config; verify proxy is running |
-| Job stuck in `running` | Use `POST /api/jobs/{id}/pause` then `/resume` to unstick |
+| `database is locked` (SQLite) | Reduce `WORKER_THREADS` or use PostgreSQL |
+| Browser login not detected | Cookies expired; re-run `python cli.py login` |
+| Proxy not working | Check `PROXY_URL` in config; verify the proxy is running |
+| Job stuck in `running` | `POST /api/jobs/{id}/pause` then `/resume` to unstick |
 
 ## Limitations
 
-1. **HTTP mode gets 1-2 posts.** Modern Facebook `www` pages embed minimal
-   data in initial HTML. Use `--browser` for more.
-2. **Browser mode without login gets ~3 posts.** Facebook limits unauthenticated
-   viewing. Run `python cli.py login` for authenticated scraping.
-3. **Browser mode with login gets more but not unlimited.** Facebook's React
-   pagination still throttles scroll depth; the tool stops when no new content
+1. **HTTP mode gets 1–2 posts.** Modern Facebook `www` pages embed minimal data
+   in the initial HTML — use `--browser` for more.
+2. **Browser mode without login gets ~3 posts.** Facebook limits
+   unauthenticated viewing; `python cli.py login` opens the full feed.
+3. **Browser mode with login gets more, but not unlimited.** Facebook's React
+   pagination still throttles scroll depth; scraping stops when no new content
    loads.
-4. **Post text may be `null`** even in browser mode — some post types (pure
-   images, shared links) don't include text in Facebook's embedded JSON.
-5. **Reaction breakdown, `video_url`, `transcript`** are usually unavailable
-   on public pages — kept in schema for forward-compatibility.
-6. **Heuristic parsing.** Facebook changes markup frequently; one malformed
-   post never crashes a source (per-post error collection).
+4. **Post text may be `null`** even in browser mode — pure-image and shared-link
+   posts often carry no text in Facebook's embedded JSON.
+5. **Reaction breakdown, `video_url`, `transcript`** are usually unavailable on
+   public pages — kept in the schema for forward-compatibility.
+6. **Heuristic parsing.** Facebook changes markup frequently; one malformed post
+   never crashes a source (per-post error collection).
 7. **Rate-limiting risk.** Aggressive use can trigger Meta's rate limits.
    Respect the defaults.
-8. **Cookies expire.** Facebook session cookies typically last 1-2 weeks.
-   Re-run `login` when they expire.
+8. **Cookies expire.** Facebook session cookies typically last 1–2 weeks —
+   re-run `login` when they do.
 
 ## Compliance summary
 
-- **Permitted:** public pages/profiles only, respects `robots.txt`, throttled,
-  single honest UA, exponential backoff, cookies cleared per response.
-  Browser mode uses saved cookies for authentication — you are responsible for
-  how you use this capability.
-- **Deliberately excluded:** CAPTCHA/anti-bot bypass, UA rotation, private/
+- **Permitted:** public pages/profiles only; respects `robots.txt`; throttled;
+  single honest UA; exponential backoff. Browser mode uses saved cookies for
+  authentication — you are responsible for how you use that capability.
+- **Deliberately excluded:** CAPTCHA/anti-bot bypass, UA rotation, private or
   restricted content, groups/events/watch sources.
 - **Your responsibility:** obey Facebook/Meta's Terms of Service, applicable
-  law (GDPR, etc.), and the target site's `robots.txt`.
+  law (e.g. GDPR), and the target site's `robots.txt`.
 
 **Full detail: [COMPLIANCE.md](./COMPLIANCE.md)**
+
+## Documentation
+
+Long-form, single-topic guides live in [docs/](./docs/README.md):
+
+| Guide | Covers |
+|---|---|
+| [ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Backend layout, job model, database, scraper internals |
+| [API.md](./docs/API.md) | Full HTTP API reference |
+| [DEPLOYMENT.md](./docs/DEPLOYMENT.md) | Docker dev+prod, Makefile, env files, VPS/TLS plan |
+| [CONTRIBUTING.md](./docs/CONTRIBUTING.md) | Setup, tests, CI, branch flow |
+
+Decision log: [DECISIONS.md](./DECISIONS.md) · Roadmap: [ROADMAP.md](./ROADMAP.md)
 
 ## License
 

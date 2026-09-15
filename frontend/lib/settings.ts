@@ -4,7 +4,7 @@
  */
 import type { PostType } from "./types";
 
-const DEFAULTS_KEY = "fb-scraper-defaults";
+const DEFAULTS_KEY = "postharvest-defaults";
 
 export interface ScrapeDefaults {
   maxPosts: string;

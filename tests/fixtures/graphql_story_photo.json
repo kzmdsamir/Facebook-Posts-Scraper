@@ -1,0 +1,73 @@
+{
+  "data": {
+    "node": {
+      "__typename": "User",
+      "timeline_list_feed_units": {
+        "edges": [
+          {
+            "node": {
+              "__typename": "Story",
+              "post_id": "111",
+              "creation_time": 1700000000,
+              "message": { "text": "Photo post" },
+              "attachments": [
+                {
+                  "media": { "__typename": "Photo", "id": "p1" },
+                  "styles": {
+                    "__typename": "StoryAttachmentPhotoStyleRenderer",
+                    "attachment": {
+                      "media": {
+                        "__typename": "Photo",
+                        "photo_image": { "uri": "https://img/photo1.jpg" }
+                      }
+                    }
+                  }
+                }
+              ],
+              "comet_sections": {
+                "feedback": {
+                  "story": {
+                    "story_ufi_container": {
+                      "story": {
+                        "feedback_context": {
+                          "feedback_target_with_context": {
+                            "comment_rendering_instance": {
+                              "comments": { "total_count": 12 }
+                            },
+                            "comet_ufi_summary_and_actions_renderer": {
+                              "feedback": {
+                                "adaptive_ufi_action_renderers": [
+                                  {
+                                    "feedback": {
+                                      "reaction_count": { "count": 1000 }
+                                    }
+                                  },
+                                  {
+                                    "feedback": {
+                                      "comment_rendering_instance": {
+                                        "comments": { "total_count": 12 }
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "feedback": {
+                                      "share_count": { "count": 33 }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

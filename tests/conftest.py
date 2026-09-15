@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the Facebook Posts Scraper test suite.
+"""Shared pytest fixtures for the PostHarvest test suite.
 
 ORDER MATTERS — read before editing:
 

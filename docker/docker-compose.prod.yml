@@ -1,0 +1,57 @@
+# docker-compose.prod.yml — PRODUCTION HARDENING LAYER (applied last).
+#
+# Usage (note: the explicit `-f` flags STOP the auto-loaded dev override):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#       --profile prod up -d --build
+#
+# Adds the hardening we deliberately do NOT ship in the base file so local
+# dev (auto-loaded override) keeps writable bind mounts and a plain user:
+#   * read-only root filesystem + tmpfs /tmp for runtime scratch
+#   * drop ALL Linux capabilities + no-new-privileges (container break-out
+#     hardening — the app never needs raw syscalls)
+#   * per-service resource caps (RAM/CPU) so one scraper burst can't starve
+#     the box
+#   * Playwright launches Chromium with --no-sandbox (already in the code),
+#     which pair correctly with dropped caps.
+#
+# postgres needs no hardening here (already internal-network only); its
+# resource caps can be added if the host is small.
+
+services:
+  backend:
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    cpus: ${BACKEND_CPUS:-1.5}
+
+  frontend:
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${FRONTEND_MEM_LIMIT:-512m}
+    cpus: ${FRONTEND_CPUS:-1.0}
+
+  nginx:
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${NGINX_MEM_LIMIT:-128m}

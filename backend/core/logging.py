@@ -1,6 +1,6 @@
 """Centralized logging configuration.
 
-Logs go to stdout under the ``facebook_scraper`` logger namespace so the
+Logs go to stdout under the ``postharvest`` logger namespace so the
 application works both in development and inside containers (Docker).
 """
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import sys
 
-_LOGGER_NAME = "facebook_scraper"
+_LOGGER_NAME = "postharvest"
 _configured = False
 
 

@@ -2,7 +2,7 @@
 
 Storage strategy
 ----------------
-* SQLite by default (``sqlite:///./data/facebook_scraper.db``) — the ``data/``
+* SQLite by default (``sqlite:///./data/postharvest.db``) — the ``data/``
   directory is created automatically on startup.
 * PostgreSQL is a runtime switch: set ``DATABASE_URL`` to a
   ``postgresql+psycopg://...`` DSN (install ``psycopg[binary]`` separately;

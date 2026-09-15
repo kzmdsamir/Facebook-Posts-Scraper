@@ -90,6 +90,28 @@ def list_accounts() -> list[str]:
     return list(load_credentials().keys())
 
 
+def get_cookie_status(account_name: str | None = None) -> str:
+    """Return ``"VALID"`` or ``"EXPIRED"`` for the given account's cookies.
+
+    Checks the ``xs`` (session) cookie expiry against the current time.
+    Returns ``"EXPIRED"`` when the cookie file is missing, unreadable,
+    or the ``xs`` cookie has expired.
+    """
+    import time as _time
+
+    cookies = load_cookies(account_name)
+    if not cookies:
+        return "EXPIRED"
+    now = _time.time()
+    xs = next((c for c in cookies if c.get("name") == "xs"), None)
+    if xs is None:
+        return "EXPIRED"
+    expires = xs.get("expires")
+    if expires is None or expires < now:
+        return "EXPIRED"
+    return "VALID"
+
+
 def load_cookies(account_name: str | None = None) -> Optional[list]:
     """Load saved cookies from disk, or None if not found.
 
@@ -194,9 +216,10 @@ def fetch_with_browser(
     use_cookies: bool = True,
     account_name: Optional[str] = None,
     progress_callback: Optional[Callable[..., None]] = None,
-) -> str:
+) -> tuple:
     """Load a Facebook page in a headless browser, scroll to load posts,
-    and return the full rendered HTML."""
+    and return ``(html, stats)`` where *stats* is a dict with at least
+    ``login_wall`` (bool) and ``posts_found`` (int)."""
     from playwright.sync_api import sync_playwright
 
     def _report(found: int) -> None:
@@ -207,6 +230,8 @@ def fetch_with_browser(
                 pass
 
     html_result = ""
+    login_wall_detected = False
+    posts_found_total = 0
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -274,6 +299,7 @@ def fetch_with_browser(
                 }
             """)
             if login_check.get("isLoginPage") or login_check.get("hasLoginForm"):
+                login_wall_detected = True
                 logger.warning("Browser: hit login wall at %s", login_check.get("url"))
                 if not load_cookies(account_name=account_name):
                     print("  WARNING: Hit Facebook login wall. Run 'python cli.py login' first.")
@@ -377,11 +403,23 @@ def fetch_with_browser(
                         script_pool.append(str(tag))
                         fresh_new += 1
 
+                # When the Comet feed is unreachable (login wall), the only
+                # posts come from the rendered DOM; keep scrolling longer
+                # instead of giving up after only 3 quiet rounds.
+                # When graphql is present but we're still below the target,
+                # be more patient — Facebook sometimes resumes after a pause.
+                current = len(dom_pool) + len(script_pool) + len(graphql_post_ids)
+                if graphql_post_ids:
+                    deficit = max(0, (max_posts or 9999) - current)
+                    stale_limit = max(3, min(deficit // 3, 12))
+                else:
+                    stale_limit = 6
                 if fresh_new == 0 and len(graphql_post_ids) == gql_before:
                     stale_rounds += 1
-                    if stale_rounds >= 3:
+                    if stale_rounds >= stale_limit:
                         logger.info(
-                            "Browser: no new posts after %d scrolls, stopping", i
+                            "Browser: no new posts after %d scrolls, stopping",
+                            stale_rounds,
                         )
                         break
                 else:
@@ -398,6 +436,10 @@ def fetch_with_browser(
                     )
                     _report(
                         len(dom_pool) + len(script_pool) + len(graphql_post_ids)
+                    )
+                    posts_found_total = max(
+                        posts_found_total,
+                        len(dom_pool) + len(script_pool) + len(graphql_post_ids),
                     )
 
                 if max_posts is not None and (
@@ -424,11 +466,21 @@ def fetch_with_browser(
                 final_dom = page.content()
             except Exception:
                 final_dom = ""
+            # Marker: the Comet feed (graphql blocks generally carry the real
+            # timeline) never loaded.  A handful of DOM stubs alone means a
+            # partial/walled view, and the caller should not report it as a
+            # clean scrape.
+            feed_marker = (
+                "<!-- fb-scrape-feed-missing -->"
+                if not graphql_payloads
+                else ""
+            )
             html_result = (
                 "<html><body>"
                 + "".join(dom_pool)
                 + "".join(script_pool)
                 + gql_blocks
+                + feed_marker
                 + final_dom
                 + "</body></html>"
             )
@@ -444,7 +496,42 @@ def fetch_with_browser(
         finally:
             browser.close()
 
-    return html_result
+    return html_result, {
+        "login_wall": login_wall_detected,
+        "posts_found": posts_found_total,
+    }
+
+
+def _clean_dom_text(text: str) -> str:
+    """Strip FB page chrome from a DOM post's text so it can be matched
+    against the clean GraphQL copy for duplicate detection."""
+    for phrase in ("Verified account", "Shared with Public", "Instagram"):
+        text = text.replace(phrase, "")
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _drop_dom_duplicates(posts, clean=_clean_dom_text):
+    """Drop DOM-only posts (``post_id=None``) whose cleaned text overlaps an
+    already-accepted post with a ``post_id``.  Keeps the rich GraphQL/script
+    copy and drops the chrome-wrapped DOM duplicate."""
+    accepted = []
+    seen_texts = []
+    for post in posts:
+        if post.post_id:
+            accepted.append(post)
+            if post.text:
+                seen_texts.append(clean(post.text))
+            continue
+        # no post_id: keep only if it doesn't duplicate accepted content
+        if post.text:
+            ctext = clean(post.text)
+            if any(ctext in other or other in ctext for other in seen_texts):
+                logger.info(
+                    "Browser parse: dropped DOM duplicate (text overlaps GraphQL copy)"
+                )
+                continue
+        accepted.append(post)
+    return accepted
 
 
 def parse_browser_page(
@@ -556,6 +643,13 @@ def parse_browser_page(
                     or post.has_image or post.has_video)
     unique_posts = [p for p in unique_posts if _has_signal(p)]
 
+    # DOM duplicates: DOM roots carry post_id=None, so the post_id dedup above
+    # can't catch them.  A DOM snapshot of a post already captured via GraphQL
+    # shows the same text (wrapped in page chrome like "Verified account" /
+    # "Shared with Public").  If a comment-less post's cleaned text overlaps an
+    # already-accepted post, drop it.
+    unique_posts = _drop_dom_duplicates(unique_posts)
+
     logger.info(
         "Browser parse: %d DOM roots, %d posts (deduped), %d errors",
         len(roots), len(unique_posts), len(post_errors),
@@ -624,20 +718,48 @@ def scrape_source_browser(
             errors=[{"url": url, "code": "invalid_url", "message": str(exc)}],
         )
 
-    # Try up to 2 times — Facebook sometimes serves a login wall on first load.
+    # Try up to 3 times — Facebook sometimes serves a login wall (or an
+    # empty/partial feed) on first load.  Attempts 1-2 use the saved session
+    # cookies (a fresh session usually unlocks the full Comet feed); attempt
+    # 3 falls back anonymous for pages that render without a session.  A
+    # short delay between attempts helps avoid tripping Facebook's rate
+    # throttle on repeated headless loads.  After all attempts, surface the
+    # cookie expiry status clearly so the caller can prompt a re-login.
     html = ""
-    for attempt in range(2):
-        html = fetch_with_browser(
+    wall_hit = False
+    stats: Dict[str, object] = {}
+
+    for attempt in range(3):
+        use_cookies = (attempt < 2) and account_name is not None
+        html, stats = fetch_with_browser(
             normalized_url,
             max_posts=max_posts,
             scroll_rounds=scroll_rounds if scroll_rounds is not None else MAX_SCROLL_ROUNDS,
             cancel_event=cancel_event,
             account_name=account_name,
+            use_cookies=use_cookies,
             progress_callback=progress_callback,
         )
-        if html and not _is_wall(html):
-            break
-        logger.warning("Browser attempt %d: login wall detected, retrying...", attempt + 1)
+
+        wall_hit = stats.get("login_wall", False) or _is_wall(html)
+
+        if not wall_hit:
+            break  # success, don't overwrite with a worse attempt
+
+        if attempt == 0 and wall_hit:
+            logger.warning("Login wall with account %s, retrying with cookies...", account_name or "default")
+        elif attempt == 1 and wall_hit:
+            logger.warning("Login wall with account %s, retrying anonymous...", account_name or "default")
+        if attempt < 2:
+            time.sleep(3)
+
+    # Surface BUG-004 clearly: if we ended with a wall AND the saved
+    # cookies are expired, tell the operator exactly what to do.
+    if wall_hit and account_name and get_cookie_status(account_name) == "EXPIRED":
+        logger.error(
+            "Account %s cookies EXPIRED. Run: python cli.py login --account %s",
+            account_name, account_name,
+        )
 
     if not html:
         return SourceResult(
@@ -661,6 +783,23 @@ def scrape_source_browser(
         page_url=normalized_url,
         handle=_handle_of(normalized_url),
     )
+    # The saved session page never yielded the GraphQL feed (only DOM
+    # stubs).  Surface it as a partial result instead of a clean scrape so
+    # the caller knows the post set is incomplete.
+    if "fb-scrape-feed-missing" in html and page.posts:
+        logger.warning(
+            "Browser: feed missing for %s — only %d DOM-only post(s) recovered",
+            normalized_url, len(page.posts),
+        )
+        errors.append({
+            "url": url,
+            "code": "partial_feed",
+            "message": (
+                "Facebook's timeline feed was not loaded (login wall / "
+                "limited session); only DOM-rendered posts were recovered. "
+                "Refresh cookies with 'python cli.py login' and retry."
+            ),
+        })
     if progress_callback:
         try:
             progress_callback(posts_found=len(page.posts), posts_extracted=len(page.posts))

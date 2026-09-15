@@ -1,0 +1,54 @@
+# docker-compose.override.yml — LOCAL DEVELOPMENT ONLY (auto-loaded by
+# `docker compose up` when this file sits next to docker-compose.yml).
+#
+# Swaps production ergonomics for dev ergonomics:
+#   * no nginx (backend and frontend are hit directly on :8000 / :3000)
+#   * backend:  uvicorn --reload on the backend-dev target, source bind-mounted
+#   * frontend: `next dev` (hot reload) on the frontend-dev target, source
+#     bind-mounted; node_modules/.next live in anonymous volumes so the host
+#     never pollutes or is polluted by container deps
+#   * postgres stays (same engine as prod — Alembic/PG bugs surface early)
+#
+# Production deployments run with the override explicitly ignored:
+#   docker compose -f docker-compose.yml --profile prod up -d --build
+#
+# It is safe to commit this file; it has no effect in production.
+
+services:
+  backend:
+    build:
+      target: backend-dev
+    image: postharvest-backend-dev:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app/backend
+      # keep container-owned bytecode cache out of the host tree
+      - backend-pycache:/app/backend/__pycache__
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status == 200 else 1)"]
+    # NOTE: uvicorn --reload requires a writable working dir for the reloader
+    # watchdog; the backend-dev target already sets that up.
+
+  frontend:
+    build:
+      target: frontend-dev
+      args:
+        # next dev reads NEXT_PUBLIC_* at runtime; bake nothing.
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_SITE_URL: http://localhost:3000
+    image: postharvest-frontend-dev:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../frontend:/app
+      - frontend-node-modules:/app/node_modules
+      - frontend-next-cache:/app/.next
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+
+volumes:
+  backend-pycache:
+  frontend-node-modules:
+  frontend-next-cache:
