@@ -1,4 +1,4 @@
-"""Facebook Posts Scraper — backend package.
+"""PostHarvest — backend package.
 
 Package layout:
     backend.main          FastAPI application entry point (uvicorn backend.main:app)

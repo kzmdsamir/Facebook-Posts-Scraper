@@ -1,8 +1,8 @@
 {
-    "name": "facebook-posts-scraper-frontend",
+    "name": "postharvest-frontend",
     "version": "1.0.0",
     "private": true,
-    "description": "Dashboard UI for the Facebook Posts Scraper — public posts extraction with progress tracking, preview and JSON/CSV/Excel export.",
+    "description": "Dashboard UI for the PostHarvest — public posts extraction with progress tracking, preview and JSON/CSV/Excel export.",
     "scripts": {
         "dev": "next dev",
         "build": "next build",

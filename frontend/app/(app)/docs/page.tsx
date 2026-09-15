@@ -8,7 +8,7 @@ import { getDocsBody } from "./content";
 export const metadata: Metadata = {
   title: "Documentation",
   description:
-    "Setup, usage guides and API reference for the Facebook Posts Scraper. Public data, throttled, never behind auth.",
+    "Setup, usage guides and API reference for the PostHarvest. Public data, throttled, never behind auth.",
 };
 
 export default function DocsOverviewPage() {

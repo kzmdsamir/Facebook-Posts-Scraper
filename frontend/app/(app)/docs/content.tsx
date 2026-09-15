@@ -59,7 +59,7 @@ const BODIES: Record<string, ReactNode> = {
     <>
       <H2>What this is</H2>
       <P>
-        Facebook Posts Scraper extracts <strong className="text-foreground">publicly available</strong> posts from
+        PostHarvest extracts <strong className="text-foreground">publicly available</strong> posts from
         Facebook pages and profiles and saves them to a local database. A background worker tracks progress per page,
         a dashboard lets you watch a run live, and results can be exported as JSON, CSV or Excel.
       </P>

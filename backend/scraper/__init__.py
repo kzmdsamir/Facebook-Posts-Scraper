@@ -1,4 +1,4 @@
-"""Facebook Posts Scraper - extraction layer (SA02).
+"""PostHarvest - extraction layer (SA02).
 
 Public interface consumed by the API layer (SA01):
 

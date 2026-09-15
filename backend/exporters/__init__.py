@@ -1,4 +1,4 @@
-"""Export layer for the Facebook Posts Scraper.
+"""Export layer for the PostHarvest.
 
 Public entry point
 ------------------

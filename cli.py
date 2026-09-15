@@ -1,4 +1,4 @@
-"""Facebook Posts Scraper CLI.
+"""PostHarvest CLI.
 
 Usage:
     python cli.py scrape <url> [url ...] [--browser] [--max-posts N] [--scrolls N] [--export csv|json|xlsx] [--output FILE]
@@ -19,8 +19,6 @@ import sys
 import io
 import time
 from pathlib import Path
-
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from backend.scraper import scrape_source, ScrapeOptions, SourceResult
 from backend.scraper.normalizer import normalize_post, NORMALIZED_KEYS
@@ -180,7 +178,7 @@ def cmd_scrape(args: argparse.Namespace) -> None:
     for i, post in enumerate(all_posts, 1):
         pid = post.get("post_id") or "unknown"
         text = (post.get("text") or "")[:120]
-        reactions = post.get("reactions_total") or 0
+        reactions = post.get("reactions") or 0
         shares = post.get("shares") or 0
         published = post.get("published_at") or "?"
         post_type = post.get("post_type") or "?"
@@ -196,14 +194,18 @@ def cmd_scrape(args: argparse.Namespace) -> None:
 
 
 def export_posts(posts: list, fmt: str, output: str | None) -> str:
+    def _prepare(path: str) -> str:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        return path
+
     if fmt == "json":
-        path = output or "posts.json"
+        path = _prepare(output or "posts.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(posts, f, indent=2, ensure_ascii=False, default=str)
         return path
 
     if fmt == "jsonl":
-        path = output or "posts.jsonl"
+        path = _prepare(output or "posts.jsonl")
         with open(path, "w", encoding="utf-8") as f:
             for post in posts:
                 f.write(json.dumps(post, ensure_ascii=False, default=str) + "\n")
@@ -221,7 +223,7 @@ def export_posts(posts: list, fmt: str, output: str | None) -> str:
 
     if fmt == "csv":
         import csv
-        path = output or "posts.csv"
+        path = _prepare(output or "posts.csv")
         if rows:
             with open(path, "w", encoding="utf-8-sig", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
@@ -231,7 +233,7 @@ def export_posts(posts: list, fmt: str, output: str | None) -> str:
 
     if fmt == "xlsx":
         from openpyxl import Workbook
-        path = output or "posts.xlsx"
+        path = _prepare(output or "posts.xlsx")
         wb = Workbook()
         ws = wb.active
         ws.title = "Posts"
@@ -271,8 +273,17 @@ def cmd_accounts(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # Re-wrap stdout so non-ASCII glyphs don't crash on Windows/legacy terminals.
+    # Must be guarded to avoid re-wrapping under pytest (which breaks capture).
+    if not isinstance(sys.stdout, io.TextIOWrapper):
+        try:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8",
+                                          errors="replace")
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(
-        description="Facebook Posts Scraper CLI",
+        description="PostHarvest CLI",
     )
     sub = parser.add_subparsers(dest="command")
 

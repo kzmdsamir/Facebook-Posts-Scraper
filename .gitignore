@@ -1,5 +1,5 @@
 # ============================================================================
-# Facebook Posts Scraper — .gitignore
+# PostHarvest — .gitignore
 # Build/runtime artifacts only. NOTE: examples/ ships intentionally
 # (sample_posts.json + generated facebook_posts.json/.csv/.xlsx) and is
 # deliberately NOT ignored.
@@ -59,6 +59,10 @@ desktop.ini
 *.log
 logs/
 
+# --- Internal planning docs (not for distribution) ------------------------
+ROADMAP.md
+DECISIONS.md
+
 # --- Temporary / generated artifacts --------------------------------------
 .pytest-tmp/
 browser_posts.json
@@ -68,3 +72,4 @@ posts.xlsxnohup.out
 
 # customs
 nohup.out
+inspo/

@@ -502,6 +502,38 @@ def fetch_with_browser(
     }
 
 
+def _clean_dom_text(text: str) -> str:
+    """Strip FB page chrome from a DOM post's text so it can be matched
+    against the clean GraphQL copy for duplicate detection."""
+    for phrase in ("Verified account", "Shared with Public", "Instagram"):
+        text = text.replace(phrase, "")
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _drop_dom_duplicates(posts, clean=_clean_dom_text):
+    """Drop DOM-only posts (``post_id=None``) whose cleaned text overlaps an
+    already-accepted post with a ``post_id``.  Keeps the rich GraphQL/script
+    copy and drops the chrome-wrapped DOM duplicate."""
+    accepted = []
+    seen_texts = []
+    for post in posts:
+        if post.post_id:
+            accepted.append(post)
+            if post.text:
+                seen_texts.append(clean(post.text))
+            continue
+        # no post_id: keep only if it doesn't duplicate accepted content
+        if post.text:
+            ctext = clean(post.text)
+            if any(ctext in other or other in ctext for other in seen_texts):
+                logger.info(
+                    "Browser parse: dropped DOM duplicate (text overlaps GraphQL copy)"
+                )
+                continue
+        accepted.append(post)
+    return accepted
+
+
 def parse_browser_page(
     html: str,
     page_url: str,
@@ -610,6 +642,13 @@ def parse_browser_page(
                     or post.media_url or post.video_url
                     or post.has_image or post.has_video)
     unique_posts = [p for p in unique_posts if _has_signal(p)]
+
+    # DOM duplicates: DOM roots carry post_id=None, so the post_id dedup above
+    # can't catch them.  A DOM snapshot of a post already captured via GraphQL
+    # shows the same text (wrapped in page chrome like "Verified account" /
+    # "Shared with Public").  If a comment-less post's cleaned text overlaps an
+    # already-accepted post, drop it.
+    unique_posts = _drop_dom_duplicates(unique_posts)
 
     logger.info(
         "Browser parse: %d DOM roots, %d posts (deduped), %d errors",

@@ -239,7 +239,7 @@ def _write_metadata(
         ("posts_count", posts_count),
         ("sheets", "Posts, Engagement, Media, Metadata"),
         ("schema_version", schema_version),
-        ("generator", "facebook-posts-scraper backend.exporters.xlsx_exporter"),
+        ("generator", "postharvest backend.exporters.xlsx_exporter"),
     ]
     for col_idx, name in enumerate(("key", "value"), start=1):
         cell = ws.cell(row=1, column=col_idx, value=name)
@@ -262,7 +262,7 @@ def export_xlsx(
     out_path: str | Path,
     *,
     job_id: str = "local",
-    source: str = "facebook-posts-scraper",
+    source: str = "postharvest",
     exported_at: datetime | None = None,
     schema_version: str = SCHEMA_VERSION,
 ) -> Path:

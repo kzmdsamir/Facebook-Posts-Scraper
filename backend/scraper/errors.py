@@ -1,4 +1,4 @@
-"""Error taxonomy for the Facebook Posts Scraper extraction layer.
+"""Error taxonomy for the PostHarvest extraction layer.
 
 Every failure that can cross the ``scraper`` package boundary is an instance of
 :class:`ScraperError` (or a subclass) and carries:

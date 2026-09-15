@@ -11,7 +11,7 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
-const STORAGE_KEY = "fb-posts-scraper-theme";
+const STORAGE_KEY = "postharvest-theme";
 
 function readStoredTheme(): Theme | null {
   if (typeof window === "undefined") return null;

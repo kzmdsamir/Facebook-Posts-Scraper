@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 #
-# Facebook Posts Scraper — single Dockerfile, two build targets.
+# PostHarvest — single Dockerfile, two build targets.
 #
-#   Backend image:   docker build --target backend  -t fb-posts-scraper-backend  .
-#   Frontend image:  docker build --target frontend -t fb-posts-scraper-frontend .
+#   Backend image:   docker build --target backend  -t postharvest-backend  .
+#   Frontend image:  docker build --target frontend -t postharvest-frontend .
 #
 # docker-compose.yml builds both images from this file via `target:`.
 #
@@ -76,6 +76,20 @@ EXPOSE 3000
 CMD ["node", "server.js"]
 
 # =====================================================================
+# STAGE: frontend-dev — `next dev` with hot reload (local development)
+# =====================================================================
+# Runs on top of frontend-build so node_modules + the source tree are present.
+# The compose dev override bind-mounts ./frontend over /app and keeps
+# node_modules/.next in volumes, so `next dev` picks up edits instantly.
+FROM frontend-build AS frontend-dev
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+EXPOSE 3000
+CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]
+
+# =====================================================================
 # STAGE: backend — FastAPI + scraper + exporters (Python 3.13)
 # =====================================================================
 FROM python:3.13-slim AS backend
@@ -97,6 +111,16 @@ RUN apt-get update \
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install -r backend/requirements.txt
 
+# Install the Chromium browser for Playwright. `install --with-deps` handles
+# both the browser binary and its system libraries (libnss3, libatk, etc.) via
+# apt, so headless rendering works on python:slim. Browsers land in a dedicated
+# dir baked into the image; the browser itself is never downloaded at runtime.
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/ms-playwright
+RUN mkdir -p /app/ms-playwright \
+    && chown appuser:appuser /app/ms-playwright \
+    && playwright install --with-deps chromium 2>&1 \
+    && chown -R appuser:appuser /app/ms-playwright
+
 # Ship the application package (uvicorn imports `backend.main:app` from /app).
 # Copy the whole tree in one shot: multi-source `COPY a b c ./dest/` FLATTENS
 # each directory's contents into ./dest (no api/… subdirs), which breaks
@@ -115,3 +139,22 @@ RUN mkdir -p /app/data && chown appuser:appuser /app/data
 USER appuser
 EXPOSE 8000
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# =====================================================================
+# STAGE: backend-dev — uvicorn --reload (local development)
+# =====================================================================
+# Reuses the full backend image (deps + Playwright + Chromium); the compose
+# dev override bind-mounts ./backend over /app/backend so edits hot-reload.
+# Runs as root so the reloader watchdog + bind-mount writes never hit
+# permission walls. Never use this stage in production.
+FROM backend AS backend-dev
+USER root
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+EXPOSE 8000
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+# =====================================================================
+# Legacy shorthand targets kept for any tooling that referenced the plain
+# stage names above; prefer the compose `target:` pins.
+# =====================================================================
