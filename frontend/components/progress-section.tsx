@@ -15,12 +15,47 @@ export interface ProgressSectionProps {
   onRetry: () => void;
 }
 
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
 function computePercent(job: JobProgress): number | null {
-  if (job.pages_total != null && job.pages_total > 0 && job.pages_completed != null) {
-    return Math.max(0, Math.min(100, Math.round((job.pages_completed / job.pages_total) * 100)));
+  const pagesTotal = job.pages_total ?? 0;
+  const pagesDone = job.pages_completed ?? 0;
+  const postsFound = job.posts_found ?? 0;
+  const postsProcessed = job.posts_processed ?? 0;
+
+  if (job.status === "completed") return 100;
+
+  // Multi-source: page stepping is the authoritative signal; we have no
+  // per-source live counters, so stay coarse rather than blend aggregates.
+  if (pagesTotal > 1) {
+    return clampPercent(Math.round((pagesDone / pagesTotal) * 100));
   }
-  if (job.posts_found != null && job.posts_found > 0 && job.posts_processed != null) {
-    return Math.max(0, Math.min(100, Math.round((job.posts_processed / job.posts_found) * 100)));
+
+  if (job.status === "failed") {
+    if (postsFound > 0 && postsProcessed > 0) {
+      return clampPercent(Math.round((postsProcessed / postsFound) * 100));
+    }
+    return 0;
+  }
+
+  // Single source: live post counters give a smooth, truthful signal once the
+  // scraper starts streaming them (the fetcher processing loop or the browser
+  // post-parse phase). posts_extracted is an absolute cumulative counter, so
+  // processed/found is a genuine fraction of the work done.
+  if (pagesTotal === 1) {
+    if (pagesDone >= 1) return 100;
+    if (postsFound > 0 && postsProcessed > 0) {
+      return clampPercent(Math.round((postsProcessed / postsFound) * 100));
+    }
+    // Still discovering (fetch/first parse): no counter to base a % on, so
+    // show the indeterminate bar instead of a fake 0%.
+    return null;
+  }
+
+  if (postsFound > 0 && postsProcessed > 0) {
+    return clampPercent(Math.round((postsProcessed / postsFound) * 100));
   }
   return null;
 }
