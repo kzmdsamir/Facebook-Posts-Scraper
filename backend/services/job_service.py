@@ -897,7 +897,9 @@ def _make_progress_callback(job_id: str, source_id: int) -> Callable:
             "posts_found": _int_or_none(
                 counters.get("posts_found", counters.get("posts_discovered"))
             ),
-            "posts_extracted": _int_or_none(counters.get("posts_extracted")),
+            "posts_extracted": _int_or_none(
+                counters.get("posts_extracted", counters.get("posts_processed"))
+            ),
             "duplicates_removed": _int_or_none(
                 counters.get("duplicates", counters.get("duplicates_removed"))
             ),
